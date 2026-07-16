@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Carpe Vault</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-mark">
+          <img src="./assets/the-carpe-verse-logo.png" alt="The Carpe Verse" />
+        </div>
+        <label class="global-search" aria-label="Buscar juegos">
+          <span>⌕</span>
+          <input id="vaultSearchInput" placeholder="Buscar juegos, platinos, PS5, PS4, Switch, PC..." />
+        </label>
+        <div class="top-actions">
+          <button id="newGameTopButton" class="ghost" type="button">+ Añadir juego</button>
+          <button id="settingsButton" class="ghost icon-button" type="button" title="Configuración">⚙</button>
+        </div>
+      </header>
+
+      <section class="hero">
+        <div>
+          <div class="vault-title-lockup">
+            <img src="./assets/the-carpe-verse-logo.png" alt="The Carpe Verse" />
+            <div>
+              <p class="eyebrow">The Carpe Vault</p>
+              <h1>The Carpe Vault</h1>
+            </div>
+          </div>
+          <p class="hero-copy">
+            Tu archivo privado de juegos, progreso, platinos y futura sincronización con PSNProfiles.
+          </p>
+          <div class="hero-pills">
+            <span>Archivo privado</span>
+            <span>PS5 · PS4 · Switch · PC</span>
+            <span>Progreso y trofeos</span>
+          </div>
+        </div>
+        <div class="profile-badge logo-badge">
+          <img src="./assets/the-carpe-verse-logo.png" alt="The Carpe Verse" />
+        </div>
+        <a id="psnProfileCard" class="psn-card" href="#" target="_blank" rel="noreferrer" hidden>
+          <img id="psnProfileCardImage" alt="PSNProfiles trophy card" />
+        </a>
+        <div class="hero-stats">
+          <div>
+            <strong id="statPlatinums">0</strong>
+            <span>Platinos</span>
+          </div>
+          <div>
+            <strong id="statProgress">0</strong>
+            <span>En progreso</span>
+          </div>
+          <div>
+            <strong id="statBacklog">0</strong>
+            <span>Backlog</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="panel">
+          <nav class="side-nav" aria-label="Navegación">
+            <button class="nav-link active" data-view="library" type="button">🎮 Mi biblioteca</button>
+            <button class="nav-link" data-view="search" type="button">🔎 Buscar juegos</button>
+            <button class="nav-link" data-view="detail" type="button">📊 Progreso</button>
+            <button class="nav-link" data-filter-shortcut="Platino" type="button">✨ Platinos</button>
+            <button class="nav-link" data-filter-shortcut="En progreso" type="button">🕹️ En progreso</button>
+          </nav>
+
+          <section class="platforms">
+            <p class="eyebrow">Plataformas</p>
+            <button class="platform-filter active" data-platform="all" type="button">Todos</button>
+            <button class="platform-filter" data-platform="PS5" type="button">PlayStation 5</button>
+            <button class="platform-filter" data-platform="PS4" type="button">PlayStation 4</button>
+            <button class="platform-filter" data-platform="Switch" type="button">Nintendo Switch</button>
+            <button class="platform-filter" data-platform="PC" type="button">PC</button>
+          </section>
+
+          <section class="library-mini">
+            <div class="panel-header">
+              <h2>Biblioteca</h2>
+              <button id="newGameButton" type="button">+ Nuevo</button>
+            </div>
+            <div class="filters">
+              <button class="filter active" data-filter="all" type="button">Todos</button>
+              <button class="filter" data-filter="Platino" type="button">Platino</button>
+              <button class="filter" data-filter="En progreso" type="button">Progreso</button>
+              <button class="filter" data-filter="Backlog" type="button">Backlog</button>
+            </div>
+            <div id="gameList" class="game-list"></div>
+          </section>
+        </aside>
+
+        <section class="main-content">
+          <section id="catalogSection" class="card catalog-card">
+            <div class="section-title-row">
+              <div>
+              <p class="eyebrow">Buscador integrado</p>
+              <h2>Catálogo de juegos</h2>
+              <p class="muted">
+                Busca desde la barra superior. Añade juegos a tu biblioteca y luego marca cómo vas.
+              </p>
+              </div>
+              <button id="emptySearchButton" class="ghost" type="button">Buscar ejemplo</button>
+            </div>
+            <div id="catalogEmptyState" class="catalog-empty">
+              <strong>Busca un juego arriba y pulsa Enter.</strong>
+              <span>Usa la plataforma del lateral para filtrar antes de buscar.</span>
+            </div>
+            <div id="searchResults" class="search-results catalog-results"></div>
+          </section>
+
+          <section id="librarySection" class="card library-board">
+            <div class="board-header">
+              <div>
+                <p class="eyebrow">Library</p>
+                <h2>Mis juegos</h2>
+              </div>
+              <div class="display-tabs">
+                <button class="ghost active" type="button">Grid</button>
+                <button class="ghost" type="button">Lista</button>
+              </div>
+            </div>
+            <section class="psn-summary">
+              <div>
+                <p class="eyebrow">PSNProfiles</p>
+                <h3 id="psnSummaryTitle">Perfil no conectado</h3>
+                <p id="psnSummaryText" class="muted">Añade tu ID de PSNProfiles en ⚙️ para enlazar tu perfil público.</p>
+              </div>
+              <div class="actions compact">
+                <button id="openPsnProfileButton" class="ghost" type="button">Abrir perfil</button>
+                <button id="syncPsnProfileButton" type="button" disabled>Importar juegos</button>
+              </div>
+            </section>
+            <div class="library-toolbar">
+              <button class="toolbar-chip active" type="button">Orden: añadido</button>
+              <button class="toolbar-chip" type="button">Release date</button>
+              <button class="toolbar-chip" type="button">Platforms</button>
+              <button class="toolbar-chip" type="button">Progress</button>
+              <button id="improveCoversButton" class="toolbar-chip" type="button">Mejorar portadas</button>
+            </div>
+            <div id="libraryGrid" class="library-grid"></div>
+          </section>
+
+          <section id="cardsSection" class="editor">
+            <form id="gameForm" class="card form-card">
+              <div class="form-top">
+                <div>
+                  <p class="eyebrow">The Carpe Vault</p>
+                  <h2>Progreso del juego</h2>
+                </div>
+                <button id="deleteButton" class="danger ghost" type="button">Eliminar</button>
+              </div>
+
+              <section id="gameProgressHero" class="game-progress-hero"></section>
+
+              <label>
+                Juego
+                <input id="titleInput" required maxlength="70" placeholder="Blasphemous II" />
+              </label>
+
+              <div class="grid two">
+                <label>
+                  Estado
+                  <select id="statusInput">
+                    <option>En progreso</option>
+                    <option>Platino</option>
+                    <option>Backlog</option>
+                    <option>Pausado</option>
+                    <option>Wishlist</option>
+                  </select>
+                </label>
+                <label>
+                  Plataforma
+                  <select id="platformInput">
+                    <option>PS5</option>
+                    <option>PS4</option>
+                    <option>Switch</option>
+                    <option>PC</option>
+                    <option>Xbox</option>
+                    <option>Multi</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="grid two">
+                <label>
+                  Horas jugadas / duración
+                  <input id="durationInput" maxlength="18" placeholder="18 h" />
+                </label>
+                <label>
+                  Dificultad
+                  <input id="difficultyInput" maxlength="12" placeholder="3/10" />
+                </label>
+              </div>
+
+              <div class="grid two">
+                <label>
+                  Progreso
+                  <input id="progressInput" type="range" min="0" max="100" value="0" />
+                  <span id="progressLabel" class="range-label">0%</span>
+                </label>
+                <label>
+                  Nº platino
+                  <input id="platinumNumberInput" maxlength="8" placeholder="Opcional" />
+                </label>
+              </div>
+
+              <label>
+                Enlace PSNProfiles
+                <input id="trophyInput" maxlength="180" placeholder="https://psnprofiles.com/trophies/..." />
+              </label>
+
+              <section class="psnprofiles-panel">
+                <div>
+                  <p class="eyebrow">PSNProfiles</p>
+                  <h3>Sincronización futura</h3>
+                  <p class="muted">
+                    Guarda aquí el enlace del juego en PSNProfiles. Más adelante lo usaremos para importar progreso y trofeos automáticamente.
+                  </p>
+                </div>
+                <div class="actions compact">
+                  <button id="openGamePsnButton" class="ghost" type="button">Abrir enlace</button>
+                  <button id="findGamePsnButton" class="ghost" type="button">Buscar en PSNP</button>
+                </div>
+              </section>
+
+              <label>
+                Nota personal
+                <textarea id="notesInput" rows="4" maxlength="220" placeholder="Qué te ha parecido, qué tal el farmeo, si lo recomiendas..."></textarea>
+              </label>
+
+              <section class="trophy-manager">
+                <div class="section-title-row compact-title">
+                  <div>
+                    <p class="eyebrow">Tracker</p>
+                    <h3>Logros / trofeos</h3>
+                  </div>
+                  <span id="trophyProgressBadge" class="trophy-progress-badge">0/0</span>
+                </div>
+                <div class="trophy-import">
+                  <textarea id="trophyImportInput" rows="4" placeholder="Pega aquí los trofeos, uno por línea. Ejemplo:
+Bronce | Primer paso
+Plata | Sin descanso
+Oro | Maestro del juego
+Platino | Trofeo de platino"></textarea>
+                  <div class="actions compact">
+                    <button id="syncGameTrophiesButton" type="button">Importar de PSNP</button>
+                    <button id="importTrophiesButton" class="ghost" type="button">Importar lista</button>
+                    <button id="addTrophyButton" class="ghost" type="button">+ Añadir logro</button>
+                  </div>
+                </div>
+                <div id="trophyList" class="trophy-list"></div>
+              </section>
+
+              <div class="actions">
+                <button type="submit">Guardar</button>
+                <button id="copyCaptionButton" class="ghost" type="button">Copiar resumen</button>
+              </div>
+            </form>
+          </section>
+        </section>
+      </section>
+
+      <dialog id="settingsDialog" class="settings-dialog">
+        <form method="dialog" class="card settings-card">
+          <div class="form-top">
+            <div>
+              <p class="eyebrow">Configuración interna</p>
+              <h2>Catálogo de juegos</h2>
+            </div>
+            <button class="ghost" value="cancel" type="submit">Cerrar</button>
+          </div>
+          <p class="muted">
+            Esto solo se toca una vez. La API key se guarda en tu navegador y queda oculta en la app normal.
+          </p>
+          <label>
+            RAWG API key
+            <input id="rawgKeyInput" autocomplete="off" placeholder="Pega tu key gratis de RAWG" />
+          </label>
+          <div class="key-row">
+            <span id="rawgKeyStatus" class="key-status">Sin key guardada</span>
+            <button id="clearRawgKeyButton" class="tiny ghost" type="button">Borrar key</button>
+          </div>
+          <label>
+            Usuario PSNProfiles
+            <input id="psnProfilesInput" autocomplete="off" placeholder="Tu ID de PSNProfiles / PSN ID" />
+          </label>
+          <div class="key-row">
+            <span id="psnProfilesStatus" class="key-status">PSNProfiles sin conectar</span>
+            <button id="clearPsnProfilesButton" class="tiny ghost" type="button">Borrar PSNP</button>
+          </div>
+          <input id="gameSearchInput" class="hidden-input" tabindex="-1" aria-hidden="true" />
+          <button id="searchGameButton" class="hidden-input" type="button" tabindex="-1" aria-hidden="true">Buscar</button>
+        </form>
+      </dialog>
+    </main>
+
+    <script src="./psnprofiles-import.js"></script>
+    <script src="./psnprofiles-trophies.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
