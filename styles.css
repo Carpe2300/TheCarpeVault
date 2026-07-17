@@ -380,11 +380,7 @@ h2 {
 }
 
 body.detail-view .workspace {
-  grid-template-columns: 1fr;
-}
-
-body.detail-view .panel {
-  display: none;
+  grid-template-columns: 220px 1fr;
 }
 
 body.detail-view .app-shell {
@@ -395,7 +391,6 @@ body.detail-view .editor {
   display: block;
   max-width: none;
   position: relative;
-  padding-left: 86px;
 }
 
 .panel,
@@ -439,7 +434,7 @@ body.detail-view .editor {
 .nav-link.active,
 .nav-link:hover {
   background: transparent;
-  color: #fff;
+  color: var(--gold);
   opacity: 1;
 }
 
@@ -939,47 +934,6 @@ body.detail-view .form-card {
   padding: 28px;
 }
 
-.back-rail {
-  position: sticky;
-  top: 92px;
-  float: left;
-  display: grid;
-  place-items: center;
-  gap: 8px;
-  width: 64px;
-  min-height: 180px;
-  margin-left: -86px;
-  margin-right: 22px;
-  padding: 14px 8px;
-  border-radius: 24px;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  background:
-    radial-gradient(circle at 50% 0%, rgba(255, 212, 93, 0.22), transparent 8rem),
-    rgba(24, 24, 26, 0.82);
-  border: 1px solid rgba(255, 212, 93, 0.20);
-  color: #fff;
-  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.35);
-}
-
-.back-rail span {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
-  background: var(--gold);
-  color: #111;
-  font-size: 1.25rem;
-  writing-mode: horizontal-tb;
-}
-
-.back-rail strong {
-  font-size: 0.82rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .form-card > label,
 .form-card > .grid,
 .form-card > .psnprofiles-panel,
@@ -1257,13 +1211,20 @@ body.detail-view .trophy-manager {
 .trophy-group-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: stretch;
   gap: 18px;
   padding: 18px 20px;
   background:
     radial-gradient(circle at 0% 0%, rgba(255, 212, 93, 0.12), transparent 24rem),
     rgba(0, 0, 0, 0.22);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.trophy-group-header > div {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
 }
 
 .trophy-group-header h4 {
@@ -1273,11 +1234,17 @@ body.detail-view .trophy-manager {
 
 .trophy-group-header span {
   flex: 0 0 auto;
+  align-self: center;
   padding: 8px 13px;
   border-radius: 999px;
   background: rgba(255, 212, 93, 0.14);
   color: var(--gold);
   font-weight: 950;
+}
+
+.pack-progress {
+  max-width: 520px;
+  height: 8px;
 }
 
 .trophy-group-list {

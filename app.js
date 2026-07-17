@@ -1,6 +1,7 @@
 const STORAGE_KEY = "carpeVerseVault.games.v1";
 const RAWG_KEY_STORAGE = "carpeVerseVault.rawgKey.v1";
 const PSNPROFILES_USER_STORAGE = "carpeVerseVault.psnProfilesUser.v1";
+const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v1";
 const RAWG_PLATFORM_IDS = {
   all: "4,7,18,187",
   PS5: "187",
@@ -64,6 +65,11 @@ const state = {
   view: "library",
 };
 
+const trophyPackState = {
+  cache: loadTrophyPackCache(),
+  pending: new Set(),
+};
+
 const elements = {
   statPlatinums: document.querySelector("#statPlatinums"),
   statProgress: document.querySelector("#statProgress"),
@@ -98,7 +104,6 @@ const elements = {
   emptySearchButton: document.querySelector("#emptySearchButton"),
   newGameButton: document.querySelector("#newGameButton"),
   newGameTopButton: document.querySelector("#newGameTopButton"),
-  backToLibraryButton: document.querySelector("#backToLibraryButton"),
   deleteButton: document.querySelector("#deleteButton"),
   form: document.querySelector("#gameForm"),
   title: document.querySelector("#titleInput"),
@@ -152,13 +157,6 @@ function init() {
       event.preventDefault();
       openCatalogSearchFromGlobal();
     }
-  });
-
-  elements.backToLibraryButton?.addEventListener("click", () => {
-    state.view = "library";
-    setActiveViewButton("library");
-    renderView();
-    renderList();
   });
 
   function addNewGame() {
@@ -222,6 +220,7 @@ function init() {
         });
       } else {
         state.view = button.dataset.view || "library";
+        if (state.view === "library") state.filter = "all";
       }
       setActiveViewButton(state.view);
       renderView();
@@ -449,8 +448,28 @@ function findBundledTrophiesForGame(game, trophyMap = getBundledTrophyMap()) {
 
 function getDisplayTrophies(game) {
   const bundled = findBundledTrophiesForGame(game);
-  if (bundled.length) return bundled;
-  return Array.isArray(game.trophies) ? game.trophies : [];
+  const trophies = bundled.length ? bundled : Array.isArray(game.trophies) ? game.trophies : [];
+  return applyCachedTrophyPacks(game, trophies);
+}
+
+function applyCachedTrophyPacks(game, trophies) {
+  const packMap = trophyPackState.cache[getTrophyPackCacheKey(game)];
+  if (!packMap) return trophies;
+  return trophies.map((trophy) => {
+    const key = getTrophyPackLookupKeys(trophy).find((item) => packMap[item]);
+    return key ? { ...trophy, group: packMap[key] } : trophy;
+  });
+}
+
+function getTrophyPackCacheKey(game) {
+  return game?.psnProfilesId || extractPsnProfilesGameId(game?.psnProfilesUrl || game?.trophy) || normalizeTitle(game?.title);
+}
+
+function getTrophyPackLookupKeys(trophy) {
+  return [
+    trophy?.id,
+    normalizeTitle(trophy?.name),
+  ].filter(Boolean);
 }
 
 async function importPsnProfilesGames() {
@@ -1011,6 +1030,19 @@ function loadGames() {
   }
 }
 
+function loadTrophyPackCache() {
+  try {
+    const cache = JSON.parse(localStorage.getItem(TROPHY_PACKS_STORAGE) || "{}");
+    return cache && typeof cache === "object" ? cache : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveTrophyPackCache() {
+  localStorage.setItem(TROPHY_PACKS_STORAGE, JSON.stringify(trophyPackState.cache));
+}
+
 function saveGames() {
   const compactGames = JSON.stringify(state.games.map(stripStoredTrophies));
   try {
@@ -1075,6 +1107,7 @@ async function render() {
   renderList();
   renderStats();
   renderView();
+  queueTrophyPackSync(game);
 }
 
 function renderSoft() {
@@ -1084,6 +1117,7 @@ function renderSoft() {
   renderGameProgressHero(game);
   renderTrophies(game);
   renderView();
+  queueTrophyPackSync(game);
 }
 
 function fillForm(game) {
@@ -1239,12 +1273,14 @@ function renderTrophies(game) {
   for (const group of groups) {
     const groupElement = document.createElement("section");
     const groupEarned = group.trophies.filter((trophy) => trophy.earned).length;
+    const groupProgress = group.trophies.length ? Math.round((groupEarned / group.trophies.length) * 100) : 0;
     groupElement.className = `trophy-group ${group.isDlc ? "is-dlc" : "is-base-game"}`;
     groupElement.innerHTML = `
       <header class="trophy-group-header">
         <div>
           <p class="eyebrow">${group.isDlc ? "DLC" : "Juego base"}</p>
           <h4>${escapeHtml(group.title)}</h4>
+          <div class="progress-bar pack-progress"><i style="width:${groupProgress}%"></i></div>
         </div>
         <span>${groupEarned}/${group.trophies.length}</span>
       </header>
@@ -1289,6 +1325,96 @@ function groupTrophiesByPsnSection(trophies) {
   return [...groups.values()].sort((a, b) => Number(a.isDlc) - Number(b.isDlc));
 }
 
+function queueTrophyPackSync(game) {
+  const trophies = getDisplayTrophies(game);
+  const cacheKey = getTrophyPackCacheKey(game);
+  const psnpUrl = game?.psnProfilesUrl || game?.trophy || "";
+  if (!cacheKey || !trophies.length || trophyPackState.cache[cacheKey] || trophyPackState.pending.has(cacheKey)) return;
+  if (!/^https?:\/\/(www\.)?psnprofiles\.com\/trophies\//i.test(psnpUrl)) return;
+  if (trophies.some((trophy) => trophy.group || trophy.section || trophy.pack || trophy.dlc || trophy.dlcName)) return;
+
+  trophyPackState.pending.add(cacheKey);
+  syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl)
+    .catch(() => {})
+    .finally(() => trophyPackState.pending.delete(cacheKey));
+}
+
+async function syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl) {
+  const text = await fetchPsnProfilesTrophyText(psnpUrl);
+  const packMap = parseTrophyPacksFromText(text, trophies);
+  const packNames = new Set(Object.values(packMap));
+  if (!packMap || packNames.size <= 1) return;
+  trophyPackState.cache[cacheKey] = packMap;
+  saveTrophyPackCache();
+  if (getSelectedGame()?.id === game.id) renderSoft();
+}
+
+async function fetchPsnProfilesTrophyText(psnpUrl) {
+  const gameId = extractPsnProfilesGameId(psnpUrl);
+  const cleanUrl = gameId ? `https://psnprofiles.com/trophies/${gameId}` : psnpUrl.replace(/\/[^/]+$/, "");
+  const hostPath = cleanUrl.replace(/^https?:\/\//, "");
+  const urls = [
+    cleanUrl,
+    `https://r.jina.ai/http://${hostPath}`,
+    `https://r.jina.ai/http://https://${hostPath}`,
+  ];
+
+  const errors = [];
+  for (const url of [...new Set(urls)]) {
+    try {
+      const response = await fetch(url, { headers: { Accept: "text/html,text/plain,*/*" } });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const text = await response.text();
+      if (/DLC Trophy Pack|Base Game|Trophies|Trophy/i.test(text)) return text;
+      errors.push(`${shortUrl(url)} sin trofeos reconocibles`);
+    } catch (error) {
+      errors.push(`${shortUrl(url)}: ${error.message}`);
+    }
+  }
+  throw new Error(errors.slice(0, 2).join(" · "));
+}
+
+function parseTrophyPacksFromText(text, trophies) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => normalizeSpaces(line.replace(/\[|\]|\(|\)/g, " ")))
+    .filter(Boolean);
+  const trophyByName = new Map(trophies.map((trophy) => [normalizeTitle(trophy.name), trophy]));
+  const packMap = {};
+  let currentPack = "Base Game";
+
+  for (const line of lines) {
+    const packName = extractTrophyPackName(line);
+    if (packName) {
+      currentPack = packName;
+      continue;
+    }
+
+    const direct = trophyByName.get(normalizeTitle(line));
+    if (direct) {
+      for (const key of getTrophyPackLookupKeys(direct)) packMap[key] = currentPack;
+      continue;
+    }
+
+    for (const [nameKey, trophy] of trophyByName.entries()) {
+      if (nameKey.length > 4 && normalizeTitle(line).includes(nameKey)) {
+        for (const key of getTrophyPackLookupKeys(trophy)) packMap[key] = currentPack;
+        break;
+      }
+    }
+  }
+
+  return packMap;
+}
+
+function extractTrophyPackName(line) {
+  const text = normalizeSpaces(line);
+  if (/^base game$/i.test(text)) return "Base Game";
+  const dlcMatch = text.match(/^(DLC\s+Trophy\s+Pack\s+\d+|DLC\s+Pack\s+\d+|DLC\s+\d+|Trophy\s+Pack\s+\d+)(?:\b|$)/i);
+  if (dlcMatch) return dlcMatch[1].replace(/\s+/g, " ").toUpperCase();
+  return "";
+}
+
 function createReadonlyTrophyRow(trophy) {
     const row = document.createElement("div");
     row.className = `trophy-row trophy-row-readonly ${trophy.earned ? "earned" : ""}`;
@@ -1299,6 +1425,9 @@ function createReadonlyTrophyRow(trophy) {
     const typeIconUrl = getPsnProfilesTrophyTypeIconUrl(type);
     const typeIcon = typeIconUrl
       ? `<img class="trophy-type-icon" src="${escapeHtml(typeIconUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+      : "";
+    const typePill = type && !/^trofeo$/i.test(type)
+      ? `<span class="trophy-type-pill ${getTrophyTypeClass(type)}">${typeIcon}${escapeHtml(type)}</span>`
       : "";
     const rarity = trophy.rarity ? `<small>${escapeHtml(formatTrophyRarity(trophy.rarity))}</small>` : "";
     const earnedDate = trophy.earnedAt ? `<small class="earned-date">${escapeHtml(trophy.earnedAt)}</small>` : "";
@@ -1317,7 +1446,7 @@ function createReadonlyTrophyRow(trophy) {
         ${originalDescription}
       </div>
       <div class="trophy-meta">
-        <span class="trophy-type-pill ${getTrophyTypeClass(type)}">${typeIcon}${escapeHtml(type)}</span>
+        ${typePill}
         ${rarity}
         ${earnedDate}
       </div>
@@ -1425,11 +1554,11 @@ function renderList() {
     const haystack = `${game.title} ${game.platform} ${game.status} ${game.notes}`.toLowerCase();
     return matchesFilter && matchesPlatform && (!query || haystack.includes(query));
   });
-  elements.gameList.innerHTML = "";
+  if (elements.gameList) elements.gameList.innerHTML = "";
   elements.libraryGrid.innerHTML = "";
 
   if (!games.length) {
-    elements.gameList.innerHTML = `<p class="muted">No hay juegos en este filtro.</p>`;
+    if (elements.gameList) elements.gameList.innerHTML = `<p class="muted">No hay juegos en este filtro.</p>`;
     elements.libraryGrid.innerHTML = `<div class="empty-state">🧐<p>No hay juegos aquí. Busca uno arriba y añádelo a tu biblioteca.</p></div>`;
     return;
   }
@@ -1448,7 +1577,7 @@ function renderList() {
       setActiveViewButton("detail");
       await render();
     });
-    elements.gameList.appendChild(button);
+    if (elements.gameList) elements.gameList.appendChild(button);
     elements.libraryGrid.appendChild(createLibraryCard(game));
   }
 }

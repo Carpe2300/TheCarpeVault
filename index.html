@@ -63,11 +63,11 @@
       <section class="workspace">
         <aside class="panel">
           <nav class="side-nav" aria-label="Navegación">
-            <button class="nav-link active" data-view="library" type="button">🎮 Mi biblioteca</button>
-            <button class="nav-link" data-view="search" type="button">🔎 Buscar juegos</button>
-            <button class="nav-link" data-view="detail" type="button">📊 Progreso</button>
-            <button class="nav-link" data-filter-shortcut="Platino" type="button">✨ Platinos</button>
-            <button class="nav-link" data-filter-shortcut="En progreso" type="button">🕹️ En progreso</button>
+            <button class="nav-link active" data-view="library" type="button">Mi biblioteca</button>
+            <button class="nav-link" data-view="search" type="button">Buscar juegos</button>
+            <button class="nav-link" data-view="detail" type="button">Progreso</button>
+            <button class="nav-link" data-filter-shortcut="Platino" type="button">Platinos</button>
+            <button class="nav-link" data-filter-shortcut="En progreso" type="button">En progreso</button>
           </nav>
 
           <section class="platforms">
@@ -77,19 +77,6 @@
             <button class="platform-filter" data-platform="PS4" type="button">PlayStation 4</button>
             <button class="platform-filter" data-platform="Switch" type="button">Nintendo Switch</button>
             <button class="platform-filter" data-platform="PC" type="button">PC</button>
-          </section>
-
-          <section class="library-mini">
-            <div class="panel-header">
-              <h2>Biblioteca</h2>
-            </div>
-            <div class="filters">
-              <button class="filter active" data-filter="all" type="button">Todos</button>
-              <button class="filter" data-filter="Platino" type="button">Platino</button>
-              <button class="filter" data-filter="En progreso" type="button">Progreso</button>
-              <button class="filter" data-filter="Backlog" type="button">Backlog</button>
-            </div>
-            <div id="gameList" class="game-list"></div>
           </section>
         </aside>
 
@@ -145,10 +132,6 @@
           </section>
 
           <section id="cardsSection" class="editor">
-            <button id="backToLibraryButton" class="back-rail" type="button" aria-label="Volver a la biblioteca">
-              <span>←</span>
-              <strong>Biblioteca</strong>
-            </button>
             <form id="gameForm" class="card form-card">
               <div class="form-top">
                 <div>
