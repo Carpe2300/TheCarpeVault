@@ -975,6 +975,8 @@ async function applyRawgGame(result) {
       rarity: psnMatch.rarity || game.rarity,
       notes: mergeNotes(game.notes, psnMatch.notes),
     });
+  } else {
+    await importPsnProfilesTrophySetForGame(game, result.name || game.title);
   }
 
   game.updatedAt = Date.now();
@@ -991,6 +993,130 @@ function findBundledPsnProfilesGameByTitle(title) {
   if (!normalizedTitle) return null;
   return games.find((game) => normalizeTitle(game.title) === normalizedTitle) ||
     games.find((game) => normalizeTitle(game.title).includes(normalizedTitle) || normalizedTitle.includes(normalizeTitle(game.title)));
+}
+
+async function importPsnProfilesTrophySetForGame(game, title) {
+  try {
+    const trophyPage = await findPsnProfilesTrophyPage(title);
+    if (!trophyPage) return false;
+    const text = await fetchPsnProfilesTrophyText(trophyPage.url);
+    const trophies = parseStandalonePsnProfilesTrophies(text, trophyPage.id);
+    if (!trophies.length) return false;
+
+    game.psnProfilesUrl = trophyPage.url;
+    game.trophy = trophyPage.url;
+    game.psnProfilesId = trophyPage.id;
+    game.trophies = trophies;
+    game.trophiesTotal = trophies.length;
+    game.trophiesEarned = 0;
+    game.progress = 0;
+    game.notes = mergeNotes(game.notes, `${trophies.length} trofeos importados desde PSNProfiles.`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function findPsnProfilesTrophyPage(title) {
+  const query = encodeURIComponent(title || "");
+  if (!query) return null;
+  const text = await fetchTextFromFallbackUrls([
+    `https://r.jina.ai/http://https://psnprofiles.com/search/games?q=${query}`,
+    `https://r.jina.ai/http://psnprofiles.com/search/games?q=${query}`,
+  ]);
+  const matches = [...text.matchAll(/\/trophies\/([0-9]+-[a-z0-9-]+)/gi)];
+  if (!matches.length) return null;
+  const normalizedTitle = normalizeTitle(title);
+  const candidates = [...new Set(matches.map((match) => match[1]))].map((id) => ({
+    id,
+    title: id.replace(/^\d+-/, "").replace(/-/g, " "),
+    url: `https://psnprofiles.com/trophies/${id}`,
+  }));
+  return candidates.find((item) => normalizeTitle(item.title) === normalizedTitle) ||
+    candidates.find((item) => normalizeTitle(item.title).includes(normalizedTitle) || normalizedTitle.includes(normalizeTitle(item.title))) ||
+    candidates[0];
+}
+
+async function fetchTextFromFallbackUrls(urls) {
+  const errors = [];
+  for (const url of [...new Set(urls)]) {
+    try {
+      const response = await fetch(url, { headers: { Accept: "text/html,text/plain,*/*" } });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const text = await response.text();
+      if (text) return text;
+    } catch (error) {
+      errors.push(`${shortUrl(url)}: ${error.message}`);
+    }
+  }
+  throw new Error(errors.slice(0, 2).join(" · "));
+}
+
+function parseStandalonePsnProfilesTrophies(text, gameId) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => normalizeSpaces(line))
+    .filter(Boolean);
+  const trophies = [];
+  let currentGroup = "Base Game";
+  let pendingImage = "";
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const packName = extractTrophyPackName(line);
+    if (packName) {
+      currentGroup = packName;
+      continue;
+    }
+
+    const imageMatch = line.match(/https:\/\/img\.psnprofiles\.com\/trophy\/[^)\s"']+\.png/i);
+    if (imageMatch) {
+      pendingImage = imageMatch[0];
+      continue;
+    }
+
+    const next = lines[index + 1] || "";
+    const rarityLine = lines.slice(index + 1, index + 5).find((item) => /\d+(?:\.\d+)?%/.test(item)) || "";
+    if (!pendingImage || !line || !next || isPsnProfilesMetaLine(line) || isPsnProfilesMetaLine(next)) continue;
+
+    trophies.push({
+      id: `psnp-${gameId || "game"}-${trophies.length + 1}-${slugifyPsnTitle(line)}`,
+      name: line.replace(/^#+\s*/, ""),
+      description: next,
+      type: inferTrophyTypeFromText(`${line} ${next} ${rarityLine}`),
+      rarity: extractCleanRarity(rarityLine),
+      earned: false,
+      earnedAt: "",
+      imageUrl: pendingImage,
+      group: currentGroup,
+    });
+    pendingImage = "";
+  }
+
+  return dedupeTrophies(trophies);
+}
+
+function dedupeTrophies(trophies) {
+  const seen = new Set();
+  return trophies.filter((trophy) => {
+    const key = normalizeTitle(trophy.name);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isPsnProfilesMetaLine(line) {
+  return /^(owners?|points?|trophies?|platinum|gold|silver|bronze|\d+(?:\.\d+)?%|common|rare|uncommon|ultra rare|very rare)$/i.test(normalizeSpaces(line));
+}
+
+function inferTrophyTypeFromText(text) {
+  const value = String(text || "").toLowerCase();
+  if (value.includes("platinum") || value.includes("platino")) return "Platino";
+  if (value.includes("gold") || value.includes("oro")) return "Oro";
+  if (value.includes("silver") || value.includes("plata")) return "Plata";
+  if (value.includes("bronze") || value.includes("bronce")) return "Bronce";
+  return "Trofeo";
 }
 
 function detectPlayStationPlatform(platforms = []) {
@@ -1353,25 +1479,13 @@ async function fetchPsnProfilesTrophyText(psnpUrl) {
   const gameId = extractPsnProfilesGameId(psnpUrl);
   const cleanUrl = gameId ? `https://psnprofiles.com/trophies/${gameId}` : psnpUrl.replace(/\/[^/]+$/, "");
   const hostPath = cleanUrl.replace(/^https?:\/\//, "");
-  const urls = [
+  const text = await fetchTextFromFallbackUrls([
     cleanUrl,
     `https://r.jina.ai/http://${hostPath}`,
     `https://r.jina.ai/http://https://${hostPath}`,
-  ];
-
-  const errors = [];
-  for (const url of [...new Set(urls)]) {
-    try {
-      const response = await fetch(url, { headers: { Accept: "text/html,text/plain,*/*" } });
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      const text = await response.text();
-      if (/DLC Trophy Pack|Base Game|Trophies|Trophy/i.test(text)) return text;
-      errors.push(`${shortUrl(url)} sin trofeos reconocibles`);
-    } catch (error) {
-      errors.push(`${shortUrl(url)}: ${error.message}`);
-    }
-  }
-  throw new Error(errors.slice(0, 2).join(" · "));
+  ]);
+  if (/DLC Trophy Pack|Base Game|Trophies|Trophy/i.test(text)) return text;
+  throw new Error("PSNProfiles no devolvió una lista de trofeos reconocible.");
 }
 
 function parseTrophyPacksFromText(text, trophies) {
@@ -1429,8 +1543,10 @@ function createReadonlyTrophyRow(trophy) {
     const typePill = type && !/^trofeo$/i.test(type)
       ? `<span class="trophy-type-pill ${getTrophyTypeClass(type)}">${typeIcon}${escapeHtml(type)}</span>`
       : "";
-    const rarity = trophy.rarity ? `<small>${escapeHtml(formatTrophyRarity(trophy.rarity))}</small>` : "";
-    const earnedDate = trophy.earnedAt ? `<small class="earned-date">${escapeHtml(trophy.earnedAt)}</small>` : "";
+    const cleanRarity = extractCleanRarity(trophy.rarity || trophy.earnedAt);
+    const cleanEarnedDate = extractCleanEarnedDate(trophy.earnedAt);
+    const rarity = cleanRarity ? `<small>${escapeHtml(formatTrophyRarity(cleanRarity))}</small>` : "";
+    const earnedDate = cleanEarnedDate ? `<small class="earned-date">${escapeHtml(cleanEarnedDate)}</small>` : "";
     const translatedName = translateTrophyText(trophy.name);
     const translatedDescription = translateTrophyText(trophy.description);
     const originalName = translatedName !== trophy.name ? `<small class="trophy-original">${escapeHtml(trophy.name || "")}</small>` : "";
@@ -1502,6 +1618,21 @@ function formatTrophyRarity(value) {
     .replace(/\bUNCOMMON\b/gi, "POCO COMÚN")
     .replace(/\bCOMMON\b/gi, "COMÚN")
     .replace(/\bRARE\b/gi, "RARO");
+}
+
+function extractCleanRarity(value) {
+  const text = normalizeSpaces(value);
+  const match = text.match(/(\d+(?:\.\d+)?%)\s*(Ultra Rare|Very Rare|Uncommon|Common|Rare|Ultra Raro|Muy Raro|Poco Común|Común|Raro)/i);
+  return match ? `${match[1]} ${match[2]}` : "";
+}
+
+function extractCleanEarnedDate(value) {
+  const text = normalizeSpaces(value);
+  if (!text) return "";
+  const date = text.match(/\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-zÁÉÍÓÚáéíóúñÑ]+\s+\d{4}/);
+  const time = text.match(/\d{1,2}:\d{2}:\d{2}\s*(?:AM|PM)?/i);
+  if (!date) return "";
+  return normalizeSpaces(`${date[0]} ${time ? time[0] : ""}`);
 }
 
 function getTrophyTypeIcon(type) {
