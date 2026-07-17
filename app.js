@@ -1,7 +1,7 @@
 const STORAGE_KEY = "carpeVerseVault.games.v1";
 const RAWG_KEY_STORAGE = "carpeVerseVault.rawgKey.v1";
 const PSNPROFILES_USER_STORAGE = "carpeVerseVault.psnProfilesUser.v1";
-const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v1";
+const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v2";
 const RAWG_PLATFORM_IDS = {
   all: "4,7,18,187",
   PS5: "187",
@@ -708,18 +708,76 @@ function findExistingLibraryGame(candidate) {
 }
 
 function dedupeLibraryGames() {
-  const seen = new Map();
-  state.games = state.games.filter((game) => {
-    const key = game.psnProfilesId
-      ? `psn:${game.psnProfilesId}`
-      : game.rawgId
-        ? `rawg:${game.rawgId}`
-        : `title:${normalizeTitle(game.title)}|${normalizePlatform(game.platform)}`;
-    if (!key || key === "title:|Multi") return false;
-    if (seen.has(key)) return false;
-    seen.set(key, game);
-    return true;
-  });
+  const buckets = new Map();
+
+  for (const game of state.games) {
+    const keys = getLibraryDedupeKeys(game);
+    if (!keys.length) continue;
+    const current = keys.map((key) => buckets.get(key)).find(Boolean);
+    const winner = current ? mergeDuplicateLibraryGames(current, game) : game;
+
+    for (const key of keys) buckets.set(key, winner);
+    if (current && winner !== current) {
+      for (const key of getLibraryDedupeKeys(current)) buckets.set(key, winner);
+    }
+  }
+
+  const keep = new Set();
+  const cleaned = [];
+  for (const game of state.games) {
+    const winner = buckets.get(getLibraryDedupeKeys(game)[0]);
+    if (!winner || keep.has(winner)) continue;
+    keep.add(winner);
+    cleaned.push(winner);
+  }
+
+  state.games = cleaned;
+  if (state.selectedId && !state.games.some((game) => game.id === state.selectedId)) {
+    state.selectedId = state.games[0]?.id || "";
+  }
+}
+
+function getLibraryDedupeKeys(game) {
+  const keys = [];
+  const titleKey = normalizeTitle(game?.title);
+  const platformKey = normalizePlatform(game?.platform);
+  if (game?.psnProfilesId) keys.push(`psn:${game.psnProfilesId}`);
+  if (titleKey) keys.push(`title:${titleKey}|${platformKey}`);
+  if (game?.rawgId) keys.push(`rawg:${game.rawgId}`);
+  return [...new Set(keys)];
+}
+
+function mergeDuplicateLibraryGames(a, b) {
+  const winner = getLibraryGameQualityScore(b) > getLibraryGameQualityScore(a) ? b : a;
+  const other = winner === a ? b : a;
+  winner.imageUrl = chooseBestCover(winner.imageUrl, other.imageUrl);
+  winner.rawgId = winner.rawgId || other.rawgId;
+  winner.rawgSlug = winner.rawgSlug || other.rawgSlug;
+  winner.psnProfilesId = winner.psnProfilesId || other.psnProfilesId;
+  winner.psnProfilesUrl = winner.psnProfilesUrl || other.psnProfilesUrl;
+  winner.trophy = winner.trophy || other.trophy;
+  winner.trophies = Array.isArray(winner.trophies) && winner.trophies.length ? winner.trophies : other.trophies;
+  winner.trophiesEarned = Math.max(Number(winner.trophiesEarned || 0), Number(other.trophiesEarned || 0));
+  winner.trophiesTotal = Math.max(Number(winner.trophiesTotal || 0), Number(other.trophiesTotal || 0));
+  winner.progress = Math.max(Number(winner.progress || 0), Number(other.progress || 0));
+  return winner;
+}
+
+function getLibraryGameQualityScore(game) {
+  return (game?.psnProfilesId ? 1000 : 0) +
+    (game?.psnProfilesUrl || game?.trophy ? 400 : 0) +
+    (Number(game?.trophiesTotal || 0) * 4) +
+    (Number(game?.trophiesEarned || 0) * 2) +
+    (game?.rawgId ? 120 : 0) +
+    (game?.imageUrl ? (isPsnProfilesCover(game.imageUrl) ? 30 : 80) : 0) +
+    Number(game?.updatedAt || 0) / 100000000000;
+}
+
+function chooseBestCover(primary, fallback) {
+  if (!primary) return fallback || "";
+  if (!fallback) return primary;
+  if (isPsnProfilesCover(primary) && !isPsnProfilesCover(fallback)) return fallback;
+  return primary;
 }
 
 function isPsnProfilesCover(url) {
@@ -1087,6 +1145,11 @@ async function fetchTextFromFallbackUrls(urls) {
 }
 
 function parseStandalonePsnProfilesTrophies(text, gameId) {
+  if (looksLikeHtml(text)) {
+    const htmlTrophies = parseStandalonePsnProfilesTrophiesFromHtml(text, gameId);
+    if (htmlTrophies.length) return htmlTrophies;
+  }
+
   const lines = String(text || "")
     .split(/\r?\n/)
     .map((line) => normalizeSpaces(line))
@@ -1130,6 +1193,55 @@ function parseStandalonePsnProfilesTrophies(text, gameId) {
   return dedupeTrophies(trophies);
 }
 
+function parseStandalonePsnProfilesTrophiesFromHtml(html, gameId) {
+  const doc = parseHtmlDocument(html);
+  if (!doc) return [];
+
+  const trophies = [];
+  let currentGroup = "Base Game";
+  const candidates = [...doc.body.querySelectorAll("tr, li, article, section, div")];
+
+  for (const node of candidates) {
+    const text = normalizeSpaces(node.textContent);
+    if (!text) continue;
+
+    const packName = extractTrophyPackName(text);
+    if (packName && isLikelyPackHeader(node, text)) {
+      currentGroup = packName;
+      continue;
+    }
+
+    const trophyNameNode =
+      node.querySelector("a.title, a[href*='/trophy/'], .title, h3, h4, strong") ||
+      node.querySelector("a");
+    const name = normalizeSpaces(trophyNameNode?.textContent || "");
+    if (!name || isPsnProfilesMetaLine(name) || name.length < 2) continue;
+
+    const description = normalizeSpaces(
+      node.querySelector(".small-info, .description, p, span")?.textContent || ""
+    );
+    const imageUrl = getAbsolutePsnProfilesImageUrl(node.querySelector("img")?.getAttribute("src") || "");
+    const rarity = extractCleanRarity(text);
+    const type = inferTrophyTypeFromNode(node, text);
+
+    if (!imageUrl && !/\d+(?:\.\d+)?%/.test(text)) continue;
+
+    trophies.push({
+      id: `psnp-${gameId || "game"}-${trophies.length + 1}-${slugifyPsnTitle(name)}`,
+      name,
+      description: description && description !== name ? description : "",
+      type,
+      rarity,
+      earned: /earned|obtenido|completed|conseguido|green/i.test(node.className || "") || /\b\d{1,2}(st|nd|rd|th)\b.*\d{4}/i.test(text),
+      earnedAt: extractCleanEarnedDate(text),
+      imageUrl,
+      group: currentGroup,
+    });
+  }
+
+  return dedupeTrophies(trophies);
+}
+
 function dedupeTrophies(trophies) {
   const seen = new Set();
   return trophies.filter((trophy) => {
@@ -1151,6 +1263,13 @@ function inferTrophyTypeFromText(text) {
   if (value.includes("silver") || value.includes("plata")) return "Plata";
   if (value.includes("bronze") || value.includes("bronce")) return "Bronce";
   return "Trofeo";
+}
+
+function inferTrophyTypeFromNode(node, text) {
+  const img = node.querySelector("img[src]");
+  const src = String(img?.getAttribute("src") || "").toLowerCase();
+  const alt = String(img?.getAttribute("alt") || "");
+  return normalizeTrophyType(`${text} ${alt} ${src}`) || inferTrophyTypeFromText(`${text} ${alt} ${src}`);
 }
 
 function detectPlayStationPlatform(platforms = []) {
@@ -1501,7 +1620,7 @@ function queueTrophyPackSync(game) {
 
 async function syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl) {
   const text = await fetchPsnProfilesTrophyText(psnpUrl);
-  const packMap = parseTrophyPacksFromText(text, trophies);
+  const packMap = parseTrophyPacksFromSource(text, trophies);
   const packNames = new Set(Object.values(packMap));
   if (!packMap || packNames.size <= 1) return;
   trophyPackState.cache[cacheKey] = packMap;
@@ -1522,10 +1641,50 @@ async function fetchPsnProfilesTrophyText(psnpUrl) {
   throw new Error("PSNProfiles no devolvió una lista de trofeos reconocible.");
 }
 
+function parseTrophyPacksFromSource(source, trophies) {
+  if (looksLikeHtml(source)) {
+    const htmlMap = parseTrophyPacksFromHtml(source, trophies);
+    if (Object.keys(htmlMap).length) return htmlMap;
+  }
+  return parseTrophyPacksFromText(source, trophies);
+}
+
+function parseTrophyPacksFromHtml(html, trophies) {
+  const doc = parseHtmlDocument(html);
+  if (!doc) return {};
+
+  const trophyByName = new Map(trophies.map((trophy) => [normalizeTitle(trophy.name), trophy]));
+  const packMap = {};
+  let currentPack = "Base Game";
+  const nodes = [...doc.body.querySelectorAll("h1,h2,h3,h4,header,tr,li,article,section,div")];
+
+  for (const node of nodes) {
+    const text = normalizeSpaces(node.textContent);
+    if (!text) continue;
+
+    const packName = extractTrophyPackName(text);
+    if (packName && isLikelyPackHeader(node, text)) {
+      currentPack = packName;
+      continue;
+    }
+
+    const normalizedText = normalizeTitle(text);
+    for (const [nameKey, trophy] of trophyByName.entries()) {
+      if (nameKey.length <= 4 || !normalizedText.includes(nameKey)) continue;
+      for (const key of getTrophyPackLookupKeys(trophy)) packMap[key] = currentPack;
+      const image = getAbsolutePsnProfilesImageUrl(node.querySelector("img")?.getAttribute("src") || "");
+      if (image && !trophy.imageUrl) trophy.imageUrl = image;
+      break;
+    }
+  }
+
+  return packMap;
+}
+
 function parseTrophyPacksFromText(text, trophies) {
   const lines = String(text || "")
     .split(/\r?\n/)
-    .map((line) => normalizeSpaces(line.replace(/\[|\]|\(|\)/g, " ")))
+    .map((line) => normalizeSpaces(line.replace(/\[|\]|\(|\)|#/g, " ")))
     .filter(Boolean);
   const trophyByName = new Map(trophies.map((trophy) => [normalizeTitle(trophy.name), trophy]));
   const packMap = {};
@@ -1557,10 +1716,42 @@ function parseTrophyPacksFromText(text, trophies) {
 
 function extractTrophyPackName(line) {
   const text = normalizeSpaces(line);
-  if (/\bbase game\b/i.test(text)) return "Base Game";
-  const dlcMatch = text.match(/\b(DLC\s+Trophy\s+Pack\s+\d+|DLC\s+Pack\s+\d+|DLC\s+\d+|Trophy\s+Pack\s+\d+|Expansion\s+\d+|Add-on\s+\d+)\b/i);
-  if (dlcMatch) return dlcMatch[1].replace(/\s+/g, " ").toUpperCase();
+  if (/^(base game|juego base|main game)\b/i.test(text) || /\bbase game\s+\d+\s+of\s+\d+\s+trophies\b/i.test(text)) return "Base Game";
+  const dlcMatch = text.match(/\b(DLC\s+Trophy\s+Pack\s+\d+|DLC\s+Pack\s+\d+|DLC\s+\d+|Trophy\s+Pack\s+\d+|Expansion\s+\d+|Add-on\s+\d+)\b(?:\s*[:\-–—]\s*([^|]+?))?(?=\s{2,}|$|\d+\s+of\s+\d+\s+Trophies|Owners?)/i);
+  if (dlcMatch) {
+    const label = dlcMatch[1].replace(/\s+/g, " ").toUpperCase();
+    const subtitle = normalizeSpaces(dlcMatch[2] || "");
+    return subtitle ? `${label}: ${subtitle}` : label;
+  }
   return "";
+}
+
+function isLikelyPackHeader(node, text) {
+  const className = String(node.className || "");
+  if (/title|header|pack|section|box/i.test(className)) return true;
+  if (/^(base game|juego base|main game|DLC\s+Trophy\s+Pack\s+\d+|DLC\s+Pack\s+\d+|DLC\s+\d+|Trophy\s+Pack\s+\d+)/i.test(text)) return true;
+  return /\b\d+\s+of\s+\d+\s+Trophies\b/i.test(text) && /\b(Base Game|DLC|Trophy Pack)\b/i.test(text);
+}
+
+function looksLikeHtml(value) {
+  return /<\s*(html|body|table|tr|div|section|article|li|img|a)\b/i.test(String(value || ""));
+}
+
+function parseHtmlDocument(html) {
+  try {
+    return new DOMParser().parseFromString(String(html || ""), "text/html");
+  } catch {
+    return null;
+  }
+}
+
+function getAbsolutePsnProfilesImageUrl(src) {
+  const value = String(src || "").trim();
+  if (!value) return "";
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith("//")) return `https:${value}`;
+  if (value.startsWith("/")) return `https://psnprofiles.com${value}`;
+  return value;
 }
 
 function createReadonlyTrophyRow(trophy) {
