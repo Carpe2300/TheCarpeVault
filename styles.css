@@ -1162,11 +1162,58 @@ body.detail-view .trophy-manager {
 
 .trophy-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
-  gap: 12px;
+  grid-template-columns: 1fr;
+  gap: 18px;
   max-height: none;
   overflow: visible;
   padding-right: 0;
+}
+
+.trophy-group {
+  overflow: hidden;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.025)),
+    rgba(0, 0, 0, 0.20);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.trophy-group.is-base-game {
+  border-color: rgba(255, 212, 93, 0.20);
+}
+
+.trophy-group.is-dlc {
+  border-color: rgba(105, 196, 255, 0.18);
+}
+
+.trophy-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 20px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(255, 212, 93, 0.12), transparent 24rem),
+    rgba(0, 0, 0, 0.22);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.trophy-group-header h4 {
+  margin: 2px 0 0;
+  font-size: 1.02rem;
+}
+
+.trophy-group-header span {
+  flex: 0 0 auto;
+  padding: 8px 13px;
+  border-radius: 999px;
+  background: rgba(255, 212, 93, 0.14);
+  color: var(--gold);
+  font-weight: 950;
+}
+
+.trophy-group-list {
+  display: grid;
 }
 
 .trophy-row {
@@ -1181,19 +1228,26 @@ body.detail-view .trophy-manager {
 }
 
 .trophy-row-readonly {
-  grid-template-columns: 64px minmax(0, 1fr) minmax(140px, 210px) 38px;
-  gap: 16px;
-  padding: 14px;
-  min-height: 92px;
+  grid-template-columns: 74px minmax(0, 1fr) minmax(140px, 220px) 42px;
+  gap: 18px;
+  padding: 14px 18px;
+  min-height: 96px;
+  border-radius: 0;
+  border-width: 0 0 1px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.trophy-group-list .trophy-row-readonly:last-child {
+  border-bottom: 0;
 }
 
 .trophy-icon {
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
+  width: 60px;
+  height: 60px;
   overflow: hidden;
-  border-radius: 12px;
+  border-radius: 10px;
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.10);
   color: var(--gold);
@@ -1221,6 +1275,7 @@ body.detail-view .trophy-manager {
   display: block;
   margin-bottom: 3px;
   color: #fff;
+  font-size: 1.02rem;
 }
 
 .trophy-copy p {
@@ -1228,6 +1283,14 @@ body.detail-view .trophy-manager {
   color: var(--muted);
   line-height: 1.35;
   font-size: 0.92rem;
+}
+
+.trophy-original {
+  display: block;
+  margin: 3px 0;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .trophy-meta {
@@ -1288,12 +1351,21 @@ body.detail-view .trophy-manager {
 .trophy-earned-mark {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
-  background: rgba(120, 242, 166, 0.14);
-  color: #96f7ab;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.45);
   font-weight: 1000;
+}
+
+.trophy-earned-mark.is-earned {
+  background: rgba(120, 242, 166, 0.16);
+  color: #96f7ab;
+}
+
+.trophy-earned-mark.is-locked {
+  border: 1px solid rgba(255, 255, 255, 0.10);
 }
 
 .trophy-row.earned {

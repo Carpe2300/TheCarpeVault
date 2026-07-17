@@ -1173,65 +1173,66 @@ function renderTrophies(game) {
   elements.trophyList.innerHTML = "";
 
   if (!trophies.length) {
-    elements.trophyList.innerHTML = `<p class="muted">Aún no hay logros. Pega una lista o añade uno manualmente.</p>`;
+    elements.trophyList.innerHTML = `<p class="muted">Todavía no tengo el checklist detallado de este juego. Cuando lo importemos desde PSNProfiles aparecerá aquí con los conseguidos marcados.</p>`;
     return;
   }
 
-  for (const trophy of trophies) {
-    const row = document.createElement("div");
-    row.className = `trophy-row ${trophy.earned ? "earned" : ""}`;
-    row.innerHTML = `
-      <label class="trophy-check">
-        <input type="checkbox" ${trophy.earned ? "checked" : ""} />
-        <span></span>
-      </label>
-      <select class="trophy-type" aria-label="Tipo de trofeo">
-        ${["Trofeo", "Bronce", "Plata", "Oro", "Platino"].map((type) => `<option ${type === trophy.type ? "selected" : ""}>${type}</option>`).join("")}
-      </select>
-      <input class="trophy-name" value="${escapeHtml(trophy.name || "")}" aria-label="Nombre del logro" />
-      <button class="tiny ghost trophy-delete" type="button">Eliminar</button>
+  const groups = groupTrophiesByPsnSection(trophies);
+
+  for (const group of groups) {
+    const groupElement = document.createElement("section");
+    const groupEarned = group.trophies.filter((trophy) => trophy.earned).length;
+    groupElement.className = `trophy-group ${group.isDlc ? "is-dlc" : "is-base-game"}`;
+    groupElement.innerHTML = `
+      <header class="trophy-group-header">
+        <div>
+          <p class="eyebrow">${group.isDlc ? "DLC" : "Juego base"}</p>
+          <h4>${escapeHtml(group.title)}</h4>
+        </div>
+        <span>${groupEarned}/${group.trophies.length}</span>
+      </header>
+      <div class="trophy-group-list"></div>
     `;
-    row.querySelector("input[type='checkbox']").addEventListener("change", (event) => {
-      trophy.earned = event.target.checked;
-      game.updatedAt = Date.now();
-      autoUpdateProgressFromTrophies(game);
-      saveGames();
-      renderSoft();
-    });
-    row.querySelector(".trophy-type").addEventListener("input", (event) => {
-      trophy.type = event.target.value;
-      game.updatedAt = Date.now();
-      saveGames();
-      renderSoft();
-    });
-    row.querySelector(".trophy-name").addEventListener("input", (event) => {
-      trophy.name = event.target.value;
-      game.updatedAt = Date.now();
-      saveGames();
-    });
-    row.querySelector(".trophy-delete").addEventListener("click", () => {
-      game.trophies = game.trophies.filter((item) => item.id !== trophy.id);
-      game.updatedAt = Date.now();
-      autoUpdateProgressFromTrophies(game);
-      saveGames();
-      renderSoft();
-    });
-    elements.trophyList.appendChild(row);
+    const groupList = groupElement.querySelector(".trophy-group-list");
+    for (const trophy of group.trophies) {
+      groupList.appendChild(createReadonlyTrophyRow(trophy));
+    }
+    elements.trophyList.appendChild(groupElement);
   }
 }
 
-function renderTrophies(game) {
-  const trophies = getDisplayTrophies(game);
-  const earned = trophies.filter((trophy) => trophy.earned).length;
-  elements.trophyProgressBadge.textContent = `${earned}/${trophies.length}`;
-  elements.trophyList.innerHTML = "";
-
-  if (!trophies.length) {
-    elements.trophyList.innerHTML = `<p class="muted">Todavia no tengo el checklist detallado de este juego. Cuando lo importemos desde PSNProfiles aparecera aqui con los conseguidos marcados.</p>`;
-    return;
-  }
+function groupTrophiesByPsnSection(trophies) {
+  const groups = new Map();
 
   for (const trophy of trophies) {
+    const rawGroup = normalizeSpaces(
+      trophy.group ||
+      trophy.section ||
+      trophy.trophyGroup ||
+      trophy.pack ||
+      trophy.dlc ||
+      trophy.dlcName ||
+      ""
+    );
+    const title = rawGroup || "Base Game";
+    const key = normalizeTitle(title) || "basegame";
+    const isDlc = rawGroup ? !/^(base game|juego base|main game|base)$/i.test(rawGroup) : false;
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        title: translateTrophyGroupTitle(title),
+        isDlc,
+        trophies: [],
+      });
+    }
+
+    groups.get(key).trophies.push(trophy);
+  }
+
+  return [...groups.values()].sort((a, b) => Number(a.isDlc) - Number(b.isDlc));
+}
+
+function createReadonlyTrophyRow(trophy) {
     const row = document.createElement("div");
     row.className = `trophy-row trophy-row-readonly ${trophy.earned ? "earned" : ""}`;
     const type = trophy.type || "Trofeo";
@@ -1242,23 +1243,79 @@ function renderTrophies(game) {
     const typeIcon = typeIconUrl
       ? `<img class="trophy-type-icon" src="${escapeHtml(typeIconUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
       : "";
-    const rarity = trophy.rarity ? `<small>${escapeHtml(trophy.rarity)}</small>` : "";
+    const rarity = trophy.rarity ? `<small>${escapeHtml(formatTrophyRarity(trophy.rarity))}</small>` : "";
     const earnedDate = trophy.earnedAt ? `<small class="earned-date">${escapeHtml(trophy.earnedAt)}</small>` : "";
+    const translatedName = translateTrophyText(trophy.name);
+    const translatedDescription = translateTrophyText(trophy.description);
+    const originalName = translatedName !== trophy.name ? `<small class="trophy-original">${escapeHtml(trophy.name || "")}</small>` : "";
+    const originalDescription = translatedDescription !== trophy.description && trophy.description
+      ? `<small class="trophy-original">${escapeHtml(trophy.description)}</small>`
+      : "";
     row.innerHTML = `
       <div class="trophy-icon ${trophy.earned ? "is-earned" : ""}">${image}</div>
       <div class="trophy-copy">
-        <strong>${escapeHtml(trophy.name || "Trofeo sin nombre")}</strong>
-        ${trophy.description ? `<p>${escapeHtml(trophy.description)}</p>` : ""}
+        <strong>${escapeHtml(translatedName || "Trofeo sin nombre")}</strong>
+        ${originalName}
+        ${translatedDescription ? `<p>${escapeHtml(translatedDescription)}</p>` : ""}
+        ${originalDescription}
       </div>
       <div class="trophy-meta">
         <span class="trophy-type-pill ${getTrophyTypeClass(type)}">${typeIcon}${escapeHtml(type)}</span>
         ${rarity}
         ${earnedDate}
       </div>
-      <div class="trophy-earned-mark" title="${trophy.earned ? "Conseguido" : "Pendiente"}">${trophy.earned ? "✓" : ""}</div>
+      <div class="trophy-earned-mark ${trophy.earned ? "is-earned" : "is-locked"}" title="${trophy.earned ? "Conseguido" : "Pendiente"}">${trophy.earned ? "✓" : "○"}</div>
     `;
-    elements.trophyList.appendChild(row);
-  }
+    return row;
+}
+
+function translateTrophyGroupTitle(title) {
+  const value = normalizeSpaces(title);
+  if (/^base game$/i.test(value)) return "Juego base";
+  if (/^main game$/i.test(value)) return "Juego principal";
+  return value || "Juego base";
+}
+
+function translateTrophyText(value) {
+  const text = normalizeSpaces(value);
+  if (!text) return "";
+  const lower = text.toLowerCase();
+  const dictionary = {
+    "we'll talk about it next time i see you": "Hablaremos de ello la próxima vez que te vea",
+    "flight of the crane": "El vuelo de la grúa",
+    "my left or your left?": "¿Mi izquierda o tu izquierda?",
+    "snake in the grass": "Serpiente entre la hierba",
+    "sightseeing": "Haciendo turismo",
+    "making faces": "Poniendo caras",
+    "tied loose end": "Cabo suelto atado",
+    "now you can come in": "Ahora puedes entrar",
+    "vertigo": "Vértigo",
+    "bittersweet": "Agridulce",
+    "get all game trophies": "Consigue todos los trofeos del juego",
+    "jump from the crane": "Salta desde la grúa",
+    "meet with rais": "Reúnete con Rais",
+    "escape the arena": "Escapa de la arena",
+    "reach the old town": "Llega a la Ciudad Vieja",
+    "show the outside world that you're still alive": "Demuestra al mundo exterior que sigues con vida",
+    "deal with tahir": "Encárgate de Tahir",
+    "find camden": "Encuentra a Camden",
+    "activate the amplifier": "Activa el amplificador",
+    "complete the game": "Completa el juego",
+    "complete the campaign": "Completa la campaña",
+    "finish the game": "Termina el juego",
+    "collect all trophies": "Consigue todos los trofeos",
+    "unlock all trophies": "Desbloquea todos los trofeos",
+  };
+  return dictionary[lower] || text;
+}
+
+function formatTrophyRarity(value) {
+  return normalizeSpaces(value)
+    .replace(/\bULTRA RARE\b/gi, "ULTRA RARO")
+    .replace(/\bVERY RARE\b/gi, "MUY RARO")
+    .replace(/\bUNCOMMON\b/gi, "POCO COMÚN")
+    .replace(/\bCOMMON\b/gi, "COMÚN")
+    .replace(/\bRARE\b/gi, "RARO");
 }
 
 function getTrophyTypeIcon(type) {
