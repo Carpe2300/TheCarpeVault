@@ -350,9 +350,19 @@ h2 {
   font-size: 1.35rem;
 }
 
-.platinum-trophy::before {
-  content: "🏆";
-  filter: grayscale(1) brightness(1.55) sepia(0.18) hue-rotate(170deg);
+.stat-icon img {
+  display: block;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.45));
+}
+
+.platinum-trophy {
+  background:
+    radial-gradient(circle at 40% 25%, rgba(240, 248, 255, 0.22), transparent 62%),
+    rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(219, 234, 255, 0.18);
 }
 
 .workspace {
@@ -1239,13 +1249,23 @@ body.detail-view .trophy-manager {
 }
 
 .trophy-type-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   width: fit-content;
-  padding: 5px 9px;
+  padding: 5px 10px 5px 7px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
   font-size: 0.74rem;
   font-weight: 950;
   text-transform: uppercase;
+}
+
+.trophy-type-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.36));
 }
 
 .trophy-type-pill.platinum {

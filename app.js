@@ -1238,6 +1238,10 @@ function renderTrophies(game) {
     const image = trophy.imageUrl
       ? `<img src="${escapeHtml(trophy.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
       : `<span>${getTrophyTypeIcon(type)}</span>`;
+    const typeIconUrl = getPsnProfilesTrophyTypeIconUrl(type);
+    const typeIcon = typeIconUrl
+      ? `<img class="trophy-type-icon" src="${escapeHtml(typeIconUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+      : "";
     const rarity = trophy.rarity ? `<small>${escapeHtml(trophy.rarity)}</small>` : "";
     const earnedDate = trophy.earnedAt ? `<small class="earned-date">${escapeHtml(trophy.earnedAt)}</small>` : "";
     row.innerHTML = `
@@ -1247,7 +1251,7 @@ function renderTrophies(game) {
         ${trophy.description ? `<p>${escapeHtml(trophy.description)}</p>` : ""}
       </div>
       <div class="trophy-meta">
-        <span class="trophy-type-pill ${getTrophyTypeClass(type)}">${escapeHtml(type)}</span>
+        <span class="trophy-type-pill ${getTrophyTypeClass(type)}">${typeIcon}${escapeHtml(type)}</span>
         ${rarity}
         ${earnedDate}
       </div>
@@ -1264,6 +1268,15 @@ function getTrophyTypeIcon(type) {
   if (value.includes("plata")) return "🥈";
   if (value.includes("bronce")) return "🥉";
   return "◇";
+}
+
+function getPsnProfilesTrophyTypeIconUrl(type) {
+  const value = String(type || "").toLowerCase();
+  if (value.includes("platino") || value.includes("platinum")) return "https://psnprofiles.com/lib/img/icons/40-platinum.png";
+  if (value.includes("oro") || value.includes("gold")) return "https://psnprofiles.com/lib/img/icons/40-gold.png";
+  if (value.includes("plata") || value.includes("silver")) return "https://psnprofiles.com/lib/img/icons/40-silver.png";
+  if (value.includes("bronce") || value.includes("bronze")) return "https://psnprofiles.com/lib/img/icons/40-bronze.png";
+  return "";
 }
 
 function getTrophyTypeClass(type) {
