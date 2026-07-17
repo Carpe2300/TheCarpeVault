@@ -14,10 +14,9 @@
         </div>
         <label class="global-search" aria-label="Buscar juegos">
           <span>⌕</span>
-          <input id="vaultSearchInput" placeholder="Buscar juegos, platinos, PS5, PS4, Switch, PC..." />
+          <input id="vaultSearchInput" placeholder="Busca en tu biblioteca o pulsa Enter para buscar juegos nuevos..." />
         </label>
         <div class="top-actions">
-          <button id="newGameTopButton" class="ghost" type="button">+ Añadir juego</button>
           <button id="settingsButton" class="ghost icon-button" type="button" title="Configuración">⚙</button>
         </div>
       </header>
@@ -83,7 +82,6 @@
           <section class="library-mini">
             <div class="panel-header">
               <h2>Biblioteca</h2>
-              <button id="newGameButton" type="button">+ Nuevo</button>
             </div>
             <div class="filters">
               <button class="filter active" data-filter="all" type="button">Todos</button>
@@ -147,6 +145,10 @@
           </section>
 
           <section id="cardsSection" class="editor">
+            <button id="backToLibraryButton" class="back-rail" type="button" aria-label="Volver a la biblioteca">
+              <span>←</span>
+              <strong>Biblioteca</strong>
+            </button>
             <form id="gameForm" class="card form-card">
               <div class="form-top">
                 <div>

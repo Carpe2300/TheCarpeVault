@@ -98,6 +98,7 @@ const elements = {
   emptySearchButton: document.querySelector("#emptySearchButton"),
   newGameButton: document.querySelector("#newGameButton"),
   newGameTopButton: document.querySelector("#newGameTopButton"),
+  backToLibraryButton: document.querySelector("#backToLibraryButton"),
   deleteButton: document.querySelector("#deleteButton"),
   form: document.querySelector("#gameForm"),
   title: document.querySelector("#titleInput"),
@@ -128,7 +129,8 @@ function init() {
     saveGames();
   }
 
-  state.selectedId = state.games[0]?.id || createGame().id;
+  cleanupEmptyNewGames();
+  state.selectedId = state.games[0]?.id || "";
   elements.rawgKey.value = localStorage.getItem(RAWG_KEY_STORAGE) || "";
   elements.psnProfilesInput.value = localStorage.getItem(PSNPROFILES_USER_STORAGE) || "";
   updateRawgKeyStatus();
@@ -136,11 +138,11 @@ function init() {
   importBundledPsnProfilesData();
   queueAutoCoverUpgrade();
 
-  elements.newGameButton.addEventListener("click", () => {
+  elements.newGameButton?.addEventListener("click", () => {
     addNewGame();
   });
 
-  elements.newGameTopButton.addEventListener("click", () => {
+  elements.newGameTopButton?.addEventListener("click", () => {
     addNewGame();
   });
 
@@ -148,12 +150,15 @@ function init() {
   elements.vaultSearch.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      state.view = "search";
-      setActiveViewButton("search");
-      elements.gameSearch.value = elements.vaultSearch.value.trim();
-      searchRawgGames();
-      renderView();
+      openCatalogSearchFromGlobal();
     }
+  });
+
+  elements.backToLibraryButton?.addEventListener("click", () => {
+    state.view = "library";
+    setActiveViewButton("library");
+    renderView();
+    renderList();
   });
 
   function addNewGame() {
@@ -163,6 +168,16 @@ function init() {
     setActiveViewButton("detail");
     saveGames();
     render();
+  }
+
+  function openCatalogSearchFromGlobal() {
+    const query = elements.vaultSearch.value.trim();
+    if (!query) return;
+    state.view = "search";
+    setActiveViewButton("search");
+    elements.gameSearch.value = query;
+    searchRawgGames();
+    renderView();
   }
 
   elements.deleteButton.addEventListener("click", () => {
@@ -898,7 +913,7 @@ function renderSearchResults(results) {
       <span>
         <strong>${escapeHtml(result.name || "Sin título")}</strong>
         <span>${escapeHtml([result.released || "Sin fecha", platforms].filter(Boolean).join(" · "))}</span>
-        <em>Añadir a biblioteca</em>
+        <em>Añadir a biblioteca · importa trofeos si hay match</em>
       </span>
     `;
     button.addEventListener("click", () => applyRawgGame(result));
@@ -907,7 +922,7 @@ function renderSearchResults(results) {
 }
 
 async function applyRawgGame(result) {
-  const game = getSelectedGame();
+  const game = createGame();
   game.title = result.name || game.title;
   game.platform = detectPlayStationPlatform(result.platforms) || game.platform || "PS5";
   game.status = game.status || "En progreso";
@@ -926,11 +941,37 @@ async function applyRawgGame(result) {
     }
   }
 
+  const psnMatch = findBundledPsnProfilesGameByTitle(game.title);
+  if (psnMatch) {
+    Object.assign(game, {
+      title: psnMatch.title || game.title,
+      status: psnMatch.status || game.status,
+      platform: psnMatch.platform || game.platform,
+      progress: Number(psnMatch.progress || game.progress || 0),
+      trophy: psnMatch.psnProfilesUrl || game.trophy,
+      psnProfilesUrl: psnMatch.psnProfilesUrl,
+      psnProfilesId: psnMatch.psnProfilesId,
+      trophiesEarned: psnMatch.trophiesEarned,
+      trophiesTotal: psnMatch.trophiesTotal,
+      rarity: psnMatch.rarity || game.rarity,
+      notes: mergeNotes(game.notes, psnMatch.notes),
+    });
+  }
+
   game.updatedAt = Date.now();
+  state.selectedId = game.id;
   saveGames();
   state.view = "detail";
   setActiveViewButton("detail");
   await render();
+}
+
+function findBundledPsnProfilesGameByTitle(title) {
+  const games = Array.isArray(window.CARPE_PSNPROFILES_IMPORT) ? window.CARPE_PSNPROFILES_IMPORT : [];
+  const normalizedTitle = normalizeTitle(title);
+  if (!normalizedTitle) return null;
+  return games.find((game) => normalizeTitle(game.title) === normalizedTitle) ||
+    games.find((game) => normalizeTitle(game.title).includes(normalizedTitle) || normalizedTitle.includes(normalizeTitle(game.title)));
 }
 
 function detectPlayStationPlatform(platforms = []) {
@@ -978,6 +1019,22 @@ function saveGames() {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.setItem(STORAGE_KEY, compactGames);
   }
+}
+
+function cleanupEmptyNewGames() {
+  const before = state.games.length;
+  state.games = state.games.filter((game) => !isEmptyPlaceholderGame(game));
+  if (state.games.length !== before) saveGames();
+}
+
+function isEmptyPlaceholderGame(game) {
+  return normalizeSpaces(game?.title).toLowerCase() === "nuevo juego" &&
+    Number(game?.progress || 0) === 0 &&
+    !normalizeSpaces(game?.notes) &&
+    !normalizeSpaces(game?.trophy || game?.psnProfilesUrl) &&
+    !normalizeSpaces(game?.imageUrl || game?.imageData) &&
+    !game?.rawgId &&
+    !game?.psnProfilesId;
 }
 
 function stripStoredTrophies(game) {
@@ -1412,13 +1469,20 @@ function createLibraryCard(game) {
       <strong>${escapeHtml(game.title || "Sin título")}</strong>
       <span>${escapeHtml(game.status)} · ${Number(game.progress || 0)}%</span>
       ${trophyCount ? `<small>${trophyDone}/${trophyCount} trofeos</small>` : ""}
-      <div class="progress-bar"><i style="width:${Number(game.progress || 0)}%"></i></div>
-      <div class="card-actions-row">
-        <button class="tiny" data-action="progress" type="button">Ver progreso</button>
-      </div>
+      <em class="progress-chip">${Number(game.progress || 0)}% completado</em>
     </div>
   `;
-  card.querySelector('[data-action="progress"]').addEventListener("click", async () => {
+  card.tabIndex = 0;
+  card.role = "button";
+  card.addEventListener("click", async () => {
+    state.selectedId = game.id;
+    state.view = "detail";
+    setActiveViewButton("detail");
+    await render();
+  });
+  card.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
     state.selectedId = game.id;
     state.view = "detail";
     setActiveViewButton("detail");
