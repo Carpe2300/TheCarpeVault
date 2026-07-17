@@ -143,7 +143,7 @@ function init() {
   updateRawgKeyStatus();
   updatePsnProfilesConnection();
   importBundledPsnProfilesData();
-  queueAutoCoverUpgrade();
+  restorePsnProfilesCovers();
 
   elements.newGameButton?.addEventListener("click", () => {
     addNewGame();
@@ -769,15 +769,33 @@ function getLibraryGameQualityScore(game) {
     (Number(game?.trophiesTotal || 0) * 4) +
     (Number(game?.trophiesEarned || 0) * 2) +
     (game?.rawgId ? 120 : 0) +
-    (game?.imageUrl ? (isPsnProfilesCover(game.imageUrl) ? 30 : 80) : 0) +
+    (game?.imageUrl ? (isPsnProfilesCover(game.imageUrl) ? 90 : 40) : 0) +
     Number(game?.updatedAt || 0) / 100000000000;
 }
 
 function chooseBestCover(primary, fallback) {
   if (!primary) return fallback || "";
   if (!fallback) return primary;
-  if (isPsnProfilesCover(primary) && !isPsnProfilesCover(fallback)) return fallback;
+  if (isPsnProfilesCover(fallback) && !isPsnProfilesCover(primary)) return fallback;
   return primary;
+}
+
+function restorePsnProfilesCovers() {
+  const imports = Array.isArray(window.CARPE_PSNPROFILES_IMPORT) ? window.CARPE_PSNPROFILES_IMPORT : [];
+  const byId = new Map(imports.filter((game) => game.psnProfilesId).map((game) => [game.psnProfilesId, game]));
+  let changed = false;
+
+  for (const game of state.games) {
+    const imported = byId.get(game.psnProfilesId || extractPsnProfilesGameId(game.psnProfilesUrl || game.trophy));
+    if (!imported?.imageUrl) continue;
+    if (game.imageUrl === imported.imageUrl && !game.imageData && game.coverSource !== "rawg") continue;
+    game.imageUrl = imported.imageUrl;
+    game.imageData = "";
+    game.coverSource = "psnprofiles";
+    changed = true;
+  }
+
+  if (changed) saveGames();
 }
 
 function isPsnProfilesCover(url) {
@@ -922,7 +940,7 @@ function queueAutoCoverUpgrade() {
 
 function needsBetterCover(game) {
   const current = String(game.imageUrl || game.imageData || "");
-  return Boolean(game.title && (!current || isPsnProfilesCover(current)));
+  return Boolean(game.title && !game.psnProfilesId && !current);
 }
 
 async function improveLibraryCoversFromRawg(options = {}) {
@@ -1063,6 +1081,9 @@ async function applyRawgGame(result) {
       psnProfilesId: psnMatch.psnProfilesId,
       trophiesEarned: psnMatch.trophiesEarned,
       trophiesTotal: psnMatch.trophiesTotal,
+      imageUrl: psnMatch.imageUrl || game.imageUrl,
+      imageData: psnMatch.imageUrl ? "" : game.imageData,
+      coverSource: psnMatch.imageUrl ? "psnprofiles" : game.coverSource,
       rarity: psnMatch.rarity || game.rarity,
       notes: mergeNotes(game.notes, psnMatch.notes),
     });
@@ -1198,45 +1219,21 @@ function parseStandalonePsnProfilesTrophiesFromHtml(html, gameId) {
   if (!doc) return [];
 
   const trophies = [];
-  let currentGroup = "Base Game";
-  const candidates = [...doc.body.querySelectorAll("tr, li, article, section, div")];
 
-  for (const node of candidates) {
-    const text = normalizeSpaces(node.textContent);
-    if (!text) continue;
-
-    const packName = extractTrophyPackName(text);
-    if (packName && isLikelyPackHeader(node, text)) {
-      currentGroup = packName;
-      continue;
+  for (const section of extractPsnProfilesHtmlSections(doc)) {
+    for (const trophy of section.trophies) {
+      trophies.push({
+        id: `psnp-${gameId || "game"}-${trophy.sourceIndex || trophies.length + 1}-${slugifyPsnTitle(trophy.name)}`,
+        name: trophy.name,
+        description: trophy.description,
+        type: trophy.type,
+        rarity: trophy.rarity,
+        earned: trophy.earned,
+        earnedAt: trophy.earnedAt,
+        imageUrl: trophy.imageUrl,
+        group: section.title,
+      });
     }
-
-    const trophyNameNode =
-      node.querySelector("a.title, a[href*='/trophy/'], .title, h3, h4, strong") ||
-      node.querySelector("a");
-    const name = normalizeSpaces(trophyNameNode?.textContent || "");
-    if (!name || isPsnProfilesMetaLine(name) || name.length < 2) continue;
-
-    const description = normalizeSpaces(
-      node.querySelector(".small-info, .description, p, span")?.textContent || ""
-    );
-    const imageUrl = getAbsolutePsnProfilesImageUrl(node.querySelector("img")?.getAttribute("src") || "");
-    const rarity = extractCleanRarity(text);
-    const type = inferTrophyTypeFromNode(node, text);
-
-    if (!imageUrl && !/\d+(?:\.\d+)?%/.test(text)) continue;
-
-    trophies.push({
-      id: `psnp-${gameId || "game"}-${trophies.length + 1}-${slugifyPsnTitle(name)}`,
-      name,
-      description: description && description !== name ? description : "",
-      type,
-      rarity,
-      earned: /earned|obtenido|completed|conseguido|green/i.test(node.className || "") || /\b\d{1,2}(st|nd|rd|th)\b.*\d{4}/i.test(text),
-      earnedAt: extractCleanEarnedDate(text),
-      imageUrl,
-      group: currentGroup,
-    });
   }
 
   return dedupeTrophies(trophies);
@@ -1270,6 +1267,15 @@ function inferTrophyTypeFromNode(node, text) {
   const src = String(img?.getAttribute("src") || "").toLowerCase();
   const alt = String(img?.getAttribute("alt") || "");
   return normalizeTrophyType(`${text} ${alt} ${src}`) || inferTrophyTypeFromText(`${text} ${alt} ${src}`);
+}
+
+function getTrophyTypeFromIconUrl(url) {
+  const value = String(url || "").toLowerCase();
+  if (value.includes("40-platinum")) return "Platino";
+  if (value.includes("40-gold")) return "Oro";
+  if (value.includes("40-silver")) return "Plata";
+  if (value.includes("40-bronze")) return "Bronce";
+  return "";
 }
 
 function detectPlayStationPlatform(platforms = []) {
@@ -1655,30 +1661,83 @@ function parseTrophyPacksFromHtml(html, trophies) {
 
   const trophyByName = new Map(trophies.map((trophy) => [normalizeTitle(trophy.name), trophy]));
   const packMap = {};
-  let currentPack = "Base Game";
-  const nodes = [...doc.body.querySelectorAll("h1,h2,h3,h4,header,tr,li,article,section,div")];
 
-  for (const node of nodes) {
-    const text = normalizeSpaces(node.textContent);
-    if (!text) continue;
-
-    const packName = extractTrophyPackName(text);
-    if (packName && isLikelyPackHeader(node, text)) {
-      currentPack = packName;
-      continue;
-    }
-
-    const normalizedText = normalizeTitle(text);
-    for (const [nameKey, trophy] of trophyByName.entries()) {
-      if (nameKey.length <= 4 || !normalizedText.includes(nameKey)) continue;
-      for (const key of getTrophyPackLookupKeys(trophy)) packMap[key] = currentPack;
-      const image = getAbsolutePsnProfilesImageUrl(node.querySelector("img")?.getAttribute("src") || "");
-      if (image && !trophy.imageUrl) trophy.imageUrl = image;
-      break;
+  for (const section of extractPsnProfilesHtmlSections(doc)) {
+    for (const imported of section.trophies) {
+      const trophy = trophyByName.get(normalizeTitle(imported.name));
+      if (!trophy) continue;
+      for (const key of getTrophyPackLookupKeys(trophy)) packMap[key] = section.title;
+      if (imported.imageUrl && !trophy.imageUrl) trophy.imageUrl = imported.imageUrl;
+      if (imported.type && (!trophy.type || /^trofeo$/i.test(trophy.type))) trophy.type = imported.type;
     }
   }
 
   return packMap;
+}
+
+function extractPsnProfilesHtmlSections(doc) {
+  const sections = [];
+  const trophyTables = [...doc.querySelectorAll("table.zebra")]
+    .filter((table) => table.querySelector("a.title[href*='/trophy/']"));
+
+  for (const table of trophyTables) {
+    const headerTable = table.previousElementSibling?.matches?.("table.zebra") &&
+      !table.previousElementSibling.querySelector("a.title[href*='/trophy/']")
+      ? table.previousElementSibling
+      : table;
+    const headerRow = headerTable.querySelector("tr");
+    const title = extractPsnProfilesSectionTitle(headerRow);
+    const trophies = [...table.querySelectorAll("tr")]
+      .map((row, index) => extractPsnProfilesTrophyRow(row, index))
+      .filter(Boolean);
+
+    if (trophies.length) sections.push({ title, trophies });
+  }
+
+  return sections;
+}
+
+function extractPsnProfilesSectionTitle(headerRow) {
+  const rawTitle = normalizeSpaces(
+    headerRow?.querySelector("span.title, .title")?.textContent ||
+    headerRow?.textContent ||
+    "Base Game"
+  );
+  return rawTitle.replace(/\s+\d+\s+of\s+\d+\s+Trophies.*$/i, "").trim() || "Base Game";
+}
+
+function extractPsnProfilesTrophyRow(row, index) {
+  const link = row.querySelector("a.title[href*='/trophy/']");
+  if (!link) return null;
+
+  const name = normalizeSpaces(link.textContent);
+  const href = link.getAttribute("href") || "";
+  const image = row.querySelector("picture img[src*='/trophy/']") || row.querySelector("img[src*='/trophy/']");
+  const typeIcon = [...row.querySelectorAll("img")]
+    .map((img) => img.getAttribute("src") || "")
+    .find((src) => /40-(platinum|gold|silver|bronze)\.png/i.test(src)) || "";
+  const titleCell = link.closest("td") || row;
+  const description = normalizeSpaces(
+    [...titleCell.childNodes]
+      .filter((node) => node.nodeType === 3)
+      .map((node) => node.textContent)
+      .join(" ")
+  ) || normalizeSpaces(link.parentElement?.textContent || "").replace(name, "").trim();
+  const text = normalizeSpaces(row.textContent);
+  const rarity = extractCleanRarity(text);
+  const earnedAt = extractCleanEarnedDate(text);
+  const sourceIndex = Number((href.match(/\/trophy\/[^/]+\/(\d+)-/) || [])[1] || index + 1);
+
+  return {
+    sourceIndex,
+    name,
+    description,
+    type: getTrophyTypeFromIconUrl(typeIcon) || inferTrophyTypeFromNode(row, text),
+    rarity,
+    earned: /\bcompleted\b/i.test(row.className || "") || Boolean(row.querySelector(".trophy.earned, picture.earned")),
+    earnedAt,
+    imageUrl: getAbsolutePsnProfilesImageUrl(image?.getAttribute("src") || ""),
+  };
 }
 
 function parseTrophyPacksFromText(text, trophies) {
