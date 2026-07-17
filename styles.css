@@ -576,7 +576,7 @@ button.tiny {
 }
 
 .search-result {
-  display: block;
+  display: grid;
   width: 100%;
   overflow: hidden;
   padding: 0;
@@ -654,6 +654,10 @@ button.tiny {
 
 .search-result > span {
   padding: 15px;
+}
+
+.add-search-result {
+  margin: 0 15px 15px;
 }
 
 .search-result span {

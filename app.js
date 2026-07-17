@@ -135,6 +135,8 @@ function init() {
   }
 
   cleanupEmptyNewGames();
+  dedupeLibraryGames();
+  saveGames();
   state.selectedId = state.games[0]?.id || "";
   elements.rawgKey.value = localStorage.getItem(RAWG_KEY_STORAGE) || "";
   elements.psnProfilesInput.value = localStorage.getItem(PSNPROFILES_USER_STORAGE) || "";
@@ -692,7 +694,32 @@ function mergePsnProfilesGames(importedGames) {
   }
 
   state.selectedId = state.games[0]?.id || state.selectedId;
+  dedupeLibraryGames();
   return { created, updated };
+}
+
+function findExistingLibraryGame(candidate) {
+  return state.games.find((game) => {
+    if (candidate.psnProfilesId && game.psnProfilesId === candidate.psnProfilesId) return true;
+    if (candidate.rawgId && game.rawgId === candidate.rawgId) return true;
+    return normalizeTitle(game.title) === normalizeTitle(candidate.title) &&
+      normalizePlatform(game.platform) === normalizePlatform(candidate.platform);
+  });
+}
+
+function dedupeLibraryGames() {
+  const seen = new Map();
+  state.games = state.games.filter((game) => {
+    const key = game.psnProfilesId
+      ? `psn:${game.psnProfilesId}`
+      : game.rawgId
+        ? `rawg:${game.rawgId}`
+        : `title:${normalizeTitle(game.title)}|${normalizePlatform(game.platform)}`;
+    if (!key || key === "title:|Multi") return false;
+    if (seen.has(key)) return false;
+    seen.set(key, game);
+    return true;
+  });
 }
 
 function isPsnProfilesCover(url) {
@@ -916,32 +943,38 @@ function renderSearchResults(results) {
   }
 
   for (const result of results) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "search-result";
+    const card = document.createElement("article");
+    card.className = "search-result";
     const platforms = (result.platforms || [])
       .map((item) => item.platform?.name)
       .filter(Boolean)
       .filter((name) => /playstation|nintendo switch|pc/i.test(name))
       .slice(0, 3)
       .join(" · ");
-    button.innerHTML = `
+    card.innerHTML = `
       <div class="search-cover">
         ${result.background_image ? `<img alt="" src="${escapeHtml(result.background_image)}" loading="lazy" referrerpolicy="no-referrer" />` : ""}
       </div>
       <span>
         <strong>${escapeHtml(result.name || "Sin título")}</strong>
         <span>${escapeHtml([result.released || "Sin fecha", platforms].filter(Boolean).join(" · "))}</span>
-        <em>Añadir a biblioteca · importa trofeos si hay match</em>
+        <em>Vista previa del catálogo</em>
       </span>
+      <button class="tiny add-search-result" type="button">Añadir</button>
     `;
-    button.addEventListener("click", () => applyRawgGame(result));
-    elements.searchResults.appendChild(button);
+    card.querySelector(".add-search-result").addEventListener("click", () => applyRawgGame(result));
+    elements.searchResults.appendChild(card);
   }
 }
 
 async function applyRawgGame(result) {
-  const game = createGame();
+  const candidate = {
+    title: result.name || "Nuevo juego",
+    platform: detectPlayStationPlatform(result.platforms) || "PS5",
+    rawgId: result.id,
+  };
+  const existing = findExistingLibraryGame(candidate);
+  const game = existing || createGame();
   game.title = result.name || game.title;
   game.platform = detectPlayStationPlatform(result.platforms) || game.platform || "PS5";
   game.status = game.status || "En progreso";
@@ -981,6 +1014,7 @@ async function applyRawgGame(result) {
 
   game.updatedAt = Date.now();
   state.selectedId = game.id;
+  dedupeLibraryGames();
   saveGames();
   state.view = "detail";
   setActiveViewButton("detail");
@@ -1523,8 +1557,8 @@ function parseTrophyPacksFromText(text, trophies) {
 
 function extractTrophyPackName(line) {
   const text = normalizeSpaces(line);
-  if (/^base game$/i.test(text)) return "Base Game";
-  const dlcMatch = text.match(/^(DLC\s+Trophy\s+Pack\s+\d+|DLC\s+Pack\s+\d+|DLC\s+\d+|Trophy\s+Pack\s+\d+)(?:\b|$)/i);
+  if (/\bbase game\b/i.test(text)) return "Base Game";
+  const dlcMatch = text.match(/\b(DLC\s+Trophy\s+Pack\s+\d+|DLC\s+Pack\s+\d+|DLC\s+\d+|Trophy\s+Pack\s+\d+|Expansion\s+\d+|Add-on\s+\d+)\b/i);
   if (dlcMatch) return dlcMatch[1].replace(/\s+/g, " ").toUpperCase();
   return "";
 }
