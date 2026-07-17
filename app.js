@@ -134,6 +134,7 @@ function init() {
   updateRawgKeyStatus();
   updatePsnProfilesConnection();
   importBundledPsnProfilesData();
+  queueAutoCoverUpgrade();
 
   elements.newGameButton.addEventListener("click", () => {
     addNewGame();
@@ -618,7 +619,7 @@ function mergePsnProfilesGames(importedGames) {
         status: imported.status,
         progress: imported.progress,
         trophy: imported.psnProfilesUrl || existing.trophy,
-        imageUrl: imported.imageUrl || existing.imageUrl,
+        imageUrl: shouldKeepExistingCover(existing) ? existing.imageUrl : imported.imageUrl || existing.imageUrl,
         imageData: existing.imageData || imported.imageData || "",
         psnProfilesUrl: imported.psnProfilesUrl,
         psnProfilesId: imported.psnProfilesId || existing.psnProfilesId,
@@ -657,6 +658,17 @@ function mergePsnProfilesGames(importedGames) {
 
   state.selectedId = state.games[0]?.id || state.selectedId;
   return { created, updated };
+}
+
+function isPsnProfilesCover(url) {
+  return String(url || "").includes("img.psnprofiles.com/game/");
+}
+
+function shouldKeepExistingCover(game) {
+  const imageUrl = String(game?.imageUrl || "");
+  if (!imageUrl) return false;
+  if (game.rawgId || game.rawgSlug || game.coverSource === "rawg") return true;
+  return !isPsnProfilesCover(imageUrl);
 }
 
 function mergeNotes(current, incoming) {
@@ -778,10 +790,26 @@ async function searchRawgGames() {
   }
 }
 
-async function improveLibraryCoversFromRawg() {
+function queueAutoCoverUpgrade() {
+  const key = elements.rawgKey.value.trim();
+  if (!key) return;
+  const pending = state.games.some((game) => needsBetterCover(game));
+  if (!pending) return;
+  window.setTimeout(() => {
+    improveLibraryCoversFromRawg({ silent: true, limit: 60 });
+  }, 900);
+}
+
+function needsBetterCover(game) {
+  const current = String(game.imageUrl || game.imageData || "");
+  return Boolean(game.title && (!current || isPsnProfilesCover(current)));
+}
+
+async function improveLibraryCoversFromRawg(options = {}) {
+  const { silent = false, limit = Infinity } = options;
   const key = elements.rawgKey.value.trim();
   if (!key) {
-    elements.settingsDialog.showModal();
+    if (!silent) elements.settingsDialog.showModal();
     return;
   }
 
@@ -792,10 +820,11 @@ async function improveLibraryCoversFromRawg() {
   let checked = 0;
 
   try {
-    const targets = state.games.filter((game) => {
-      const current = String(game.imageUrl || game.imageData || "");
-      return game.title && (!current || current.includes("img.psnprofiles.com/game/"));
-    });
+    const targets = state.games.filter(needsBetterCover).slice(0, limit);
+    if (!targets.length) {
+      if (!silent) button.textContent = "Portadas OK";
+      return;
+    }
 
     for (const game of targets) {
       checked += 1;
@@ -815,6 +844,7 @@ async function improveLibraryCoversFromRawg() {
 
       game.imageUrl = result.background_image;
       game.imageData = "";
+      game.coverSource = "rawg";
       game.rawgId = result.id;
       game.rawgSlug = result.slug;
       game.rawgReleased = result.released || game.rawgReleased;
@@ -825,18 +855,19 @@ async function improveLibraryCoversFromRawg() {
 
     saveGames();
     render();
+    const remaining = state.games.filter(needsBetterCover).length;
     button.textContent = improved ? `Mejoradas ${improved}` : "Sin cambios";
-    setTimeout(() => {
-      button.textContent = originalText;
-    }, 1800);
+    if (remaining && silent) {
+      window.setTimeout(() => improveLibraryCoversFromRawg({ silent: true, limit: 60 }), 1500);
+    }
   } catch (error) {
     button.textContent = "Error portadas";
-    alert(`No he podido mejorar portadas: ${error.message}`);
+    if (!silent) alert(`No he podido mejorar portadas: ${error.message}`);
   } finally {
     setTimeout(() => {
       button.disabled = false;
       button.textContent = originalText;
-    }, 2000);
+    }, silent ? 800 : 2000);
   }
 }
 
@@ -1297,11 +1328,12 @@ function createLibraryCard(game) {
   const card = document.createElement("article");
   card.className = "library-game-card";
   const background = game.imageData || game.imageUrl || "";
+  const lowQualityCover = background && isPsnProfilesCover(background);
   const trophyCount = Number(game.trophiesTotal || 0);
   const trophyDone = Number(game.trophiesEarned || (Array.isArray(game.trophies) ? game.trophies.filter((trophy) => trophy.earned).length : 0));
   card.innerHTML = `
-    <div class="library-cover">
-      ${background ? `<img alt="" src="${escapeHtml(background)}" loading="lazy" referrerpolicy="no-referrer" />` : `<div class="cover-fallback">${escapeHtml((game.title || "?").slice(0, 1))}</div>`}
+    <div class="library-cover ${lowQualityCover ? "low-res-cover" : "hero-cover"}">
+      ${background ? `<img class="cover-bg" alt="" src="${escapeHtml(background)}" loading="lazy" referrerpolicy="no-referrer" /><img class="cover-main" alt="" src="${escapeHtml(background)}" loading="lazy" referrerpolicy="no-referrer" />` : `<div class="cover-fallback">${escapeHtml((game.title || "?").slice(0, 1))}</div>`}
       <span>${escapeHtml(game.platform || "Multi")}</span>
     </div>
     <div class="library-info">

@@ -525,14 +525,46 @@ button.tiny {
   background-position: center;
 }
 
-.search-cover img,
-.library-cover img {
+.search-cover img {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.library-cover img {
+  display: block;
+}
+
+.library-cover .cover-bg {
+  position: absolute;
+  inset: -14px;
+  width: calc(100% + 28px);
+  height: calc(100% + 28px);
+  object-fit: cover;
+  filter: blur(16px) saturate(1.25) brightness(0.62);
+  transform: scale(1.08);
+}
+
+.library-cover .cover-main {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.library-cover.hero-cover .cover-main {
+  object-fit: cover;
+}
+
+.library-cover.low-res-cover .cover-main {
+  inset: 18px;
+  width: calc(100% - 36px);
+  height: calc(100% - 36px);
+  object-fit: contain;
+  filter: drop-shadow(0 18px 24px rgba(0, 0, 0, 0.45));
 }
 
 .search-result strong,
@@ -685,12 +717,16 @@ button.tiny {
 .library-cover {
   position: relative;
   overflow: hidden;
-  min-height: 190px;
+  min-height: 210px;
   background:
     radial-gradient(circle at 30% 20%, rgba(255, 212, 93, 0.20), transparent 16rem),
     linear-gradient(135deg, #18181f, #070709);
   background-size: cover;
   background-position: center;
+}
+
+.library-cover.hero-cover {
+  min-height: 230px;
 }
 
 .cover-fallback {
@@ -822,8 +858,7 @@ button.tiny {
   border: 1px solid rgba(255, 255, 255, 0.10);
 }
 
-.progress-cover img,
-.library-cover img {
+.progress-cover img {
   width: 100%;
   height: 100%;
   min-height: inherit;
