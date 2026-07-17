@@ -313,6 +313,23 @@ h2 {
   background: transparent;
 }
 
+body.detail-view .workspace {
+  grid-template-columns: 1fr;
+}
+
+body.detail-view .panel {
+  display: none;
+}
+
+body.detail-view .app-shell {
+  width: min(1860px, calc(100% - 36px));
+}
+
+body.detail-view .editor {
+  display: block;
+  max-width: none;
+}
+
 .panel,
 .card {
   border-radius: 28px;
@@ -828,22 +845,27 @@ button.tiny {
   gap: 16px;
 }
 
+body.detail-view .form-card {
+  gap: 24px;
+  padding: 28px;
+}
+
 .form-card > label,
 .form-card > .grid,
 .form-card > .psnprofiles-panel,
 .form-card > .actions,
-.trophy-import,
+.form-card .trophy-import,
 #deleteButton {
-  display: none;
+  display: none !important;
 }
 
 .game-progress-hero {
   display: grid;
-  grid-template-columns: minmax(180px, 280px) 1fr;
-  gap: 22px;
+  grid-template-columns: minmax(360px, 42%) minmax(0, 1fr);
+  gap: 30px;
   align-items: stretch;
-  padding: 16px;
-  border-radius: 24px;
+  padding: 24px;
+  border-radius: 30px;
   background:
     radial-gradient(circle at 8% 12%, rgba(255, 212, 93, 0.18), transparent 18rem),
     linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
@@ -851,9 +873,9 @@ button.tiny {
 }
 
 .progress-cover {
-  min-height: 230px;
+  min-height: clamp(340px, 44vh, 560px);
   overflow: hidden;
-  border-radius: 20px;
+  border-radius: 24px;
   background: #0b0b0d;
   border: 1px solid rgba(255, 255, 255, 0.10);
 }
@@ -871,11 +893,11 @@ button.tiny {
 .progress-detail {
   display: grid;
   align-content: center;
-  gap: 14px;
+  gap: 18px;
 }
 
 .progress-detail h3 {
-  font-size: clamp(2rem, 5vw, 4.2rem);
+  font-size: clamp(3rem, 7vw, 7.4rem);
   line-height: 0.95;
   letter-spacing: -0.06em;
   margin: 0;
@@ -1003,11 +1025,17 @@ canvas {
 
 .trophy-manager {
   display: grid;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 20px;
+  gap: 20px;
+  padding: 24px;
+  border-radius: 28px;
   background: rgba(0, 0, 0, 0.22);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+body.detail-view .trophy-manager {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(255, 212, 93, 0.08), transparent 24rem),
+    rgba(0, 0, 0, 0.22);
 }
 
 .psn-summary,
@@ -1072,10 +1100,11 @@ canvas {
 
 .trophy-list {
   display: grid;
-  gap: 8px;
-  max-height: 340px;
-  overflow: auto;
-  padding-right: 4px;
+  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+  gap: 12px;
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .trophy-row {
@@ -1090,9 +1119,10 @@ canvas {
 }
 
 .trophy-row-readonly {
-  grid-template-columns: 58px minmax(0, 1fr) minmax(130px, 180px) 34px;
-  gap: 14px;
-  padding: 12px;
+  grid-template-columns: 64px minmax(0, 1fr) minmax(140px, 210px) 38px;
+  gap: 16px;
+  padding: 14px;
+  min-height: 92px;
 }
 
 .trophy-icon {
@@ -1253,6 +1283,14 @@ canvas {
 
   .panel {
     min-height: auto;
+  }
+
+  .game-progress-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .trophy-list {
+    grid-template-columns: 1fr;
   }
 }
 

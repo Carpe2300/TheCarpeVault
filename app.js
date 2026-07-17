@@ -315,9 +315,9 @@ function init() {
   });
 
   elements.copyCaptionButton.addEventListener("click", copyCaption);
-  elements.syncGameTrophiesButton.addEventListener("click", importSelectedGameTrophiesFromPsnProfiles);
-  elements.importTrophiesButton.addEventListener("click", importTrophiesFromTextarea);
-  elements.addTrophyButton.addEventListener("click", addBlankTrophy);
+  elements.syncGameTrophiesButton?.addEventListener("click", importSelectedGameTrophiesFromPsnProfiles);
+  elements.importTrophiesButton?.addEventListener("click", importTrophiesFromTextarea);
+  elements.addTrophyButton?.addEventListener("click", addBlankTrophy);
 
   render();
 }
@@ -329,6 +329,7 @@ function setActiveViewButton(view) {
 }
 
 function renderView() {
+  document.body.classList.toggle("detail-view", state.view === "detail");
   elements.catalogSection.hidden = state.view !== "search";
   elements.librarySection.hidden = state.view !== "library";
   elements.cardsSection.hidden = state.view !== "detail";
@@ -1039,7 +1040,7 @@ function fillForm(game) {
   elements.progress.value = Number(game.progress || 0);
   elements.progressLabel.textContent = `${elements.progress.value}%`;
   elements.notes.value = game.notes || "";
-  elements.trophyImport.value = "";
+  if (elements.trophyImport) elements.trophyImport.value = "";
   renderGameProgressHero(game);
   renderTrophies(game);
 }
@@ -1093,6 +1094,7 @@ function renderStats() {
 }
 
 function importTrophiesFromTextarea() {
+  if (!elements.trophyImport) return;
   const game = getSelectedGame();
   const lines = elements.trophyImport.value
     .split(/\r?\n/)
