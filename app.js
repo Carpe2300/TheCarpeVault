@@ -134,8 +134,6 @@ function init() {
   updateRawgKeyStatus();
   updatePsnProfilesConnection();
   importBundledPsnProfilesData();
-  importBundledTrophiesForExistingGames();
-  saveGames();
 
   elements.newGameButton.addEventListener("click", () => {
     addNewGame();
@@ -405,25 +403,13 @@ function importBundledPsnProfilesData() {
 
   const result = mergePsnProfilesGames(bundledGames);
   if (result.created || result.updated) {
-    importBundledTrophiesForExistingGames();
     saveGames();
     elements.psnSummaryText.textContent = `Importación local PSNProfiles: ${result.created} nuevos y ${result.updated} actualizados.`;
   }
 }
 
 function importBundledTrophiesForExistingGames() {
-  const trophyMap = getBundledTrophyMap();
-  if (!Object.keys(trophyMap).length) return 0;
-
-  let updated = 0;
-  for (const game of state.games) {
-    const trophies = findBundledTrophiesForGame(game, trophyMap);
-    if (!trophies.length) continue;
-    game.trophies = trophies.map((trophy) => ({ ...trophy }));
-    game.updatedAt = Date.now();
-    updated += 1;
-  }
-  return updated;
+  return 0;
 }
 
 function getBundledTrophyMap() {
@@ -442,6 +428,12 @@ function findBundledTrophiesForGame(game, trophyMap = getBundledTrophyMap()) {
     if (Array.isArray(trophyMap[key])) return trophyMap[key];
   }
   return [];
+}
+
+function getDisplayTrophies(game) {
+  const bundled = findBundledTrophiesForGame(game);
+  if (bundled.length) return bundled;
+  return Array.isArray(game.trophies) ? game.trophies : [];
 }
 
 async function importPsnProfilesGames() {
@@ -939,14 +931,27 @@ async function imageUrlToDataUrl(url) {
 
 function loadGames() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    const games = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    return Array.isArray(games) ? games.map(stripStoredTrophies) : [];
   } catch {
     return [];
   }
 }
 
 function saveGames() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.games));
+  const compactGames = JSON.stringify(state.games.map(stripStoredTrophies));
+  try {
+    localStorage.setItem(STORAGE_KEY, compactGames);
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.setItem(STORAGE_KEY, compactGames);
+  }
+}
+
+function stripStoredTrophies(game) {
+  if (!game || typeof game !== "object") return game;
+  const { trophies, ...rest } = game;
+  return rest;
 }
 
 function createGame() {
@@ -1011,7 +1016,7 @@ function fillForm(game) {
 function renderGameProgressHero(game) {
   if (!elements.gameProgressHero || !game) return;
   const background = game.imageData || game.imageUrl || "";
-  const trophies = Array.isArray(game.trophies) ? game.trophies : [];
+  const trophies = getDisplayTrophies(game);
   const earned = Number(game.trophiesEarned || trophies.filter((trophy) => trophy.earned).length || 0);
   const total = Number(game.trophiesTotal || trophies.length || 0);
   const progress = total ? Math.round((earned / total) * 100) : Number(game.progress || 0);
@@ -1129,7 +1134,7 @@ function addBlankTrophy() {
 }
 
 function renderTrophies(game) {
-  const trophies = Array.isArray(game.trophies) ? game.trophies : [];
+  const trophies = getDisplayTrophies(game);
   const earned = trophies.filter((trophy) => trophy.earned).length;
   elements.trophyProgressBadge.textContent = `${earned}/${trophies.length}`;
   elements.trophyList.innerHTML = "";
@@ -1183,7 +1188,7 @@ function renderTrophies(game) {
 }
 
 function renderTrophies(game) {
-  const trophies = Array.isArray(game.trophies) ? game.trophies : [];
+  const trophies = getDisplayTrophies(game);
   const earned = trophies.filter((trophy) => trophy.earned).length;
   elements.trophyProgressBadge.textContent = `${earned}/${trophies.length}`;
   elements.trophyList.innerHTML = "";
@@ -1238,7 +1243,7 @@ function getTrophyTypeClass(type) {
 }
 
 function autoUpdateProgressFromTrophies(game) {
-  const trophies = Array.isArray(game.trophies) ? game.trophies : [];
+  const trophies = getDisplayTrophies(game);
   if (!trophies.length) return;
   const earned = trophies.filter((trophy) => trophy.earned).length;
   game.progress = Math.round((earned / trophies.length) * 100);
@@ -1523,7 +1528,7 @@ function createCaption(game) {
 }
 
 function createTrophyCaptionLine(game) {
-  const trophies = Array.isArray(game.trophies) ? game.trophies : [];
+  const trophies = getDisplayTrophies(game);
   if (!trophies.length) return "";
   const earned = trophies.filter((trophy) => trophy.earned).length;
   return `\n\nTrofeos: ${earned}/${trophies.length}.`;
