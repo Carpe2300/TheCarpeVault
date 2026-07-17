@@ -68,6 +68,7 @@ const state = {
 const trophyPackState = {
   cache: loadTrophyPackCache(),
   pending: new Set(),
+  failed: new Set(),
 };
 
 const elements = {
@@ -776,7 +777,7 @@ function getLibraryGameQualityScore(game) {
 function chooseBestCover(primary, fallback) {
   if (!primary) return fallback || "";
   if (!fallback) return primary;
-  if (isPsnProfilesCover(fallback) && !isPsnProfilesCover(primary)) return fallback;
+  if (isPsnProfilesCover(primary) && !isPsnProfilesCover(fallback)) return fallback;
   return primary;
 }
 
@@ -788,6 +789,7 @@ function restorePsnProfilesCovers() {
   for (const game of state.games) {
     const imported = byId.get(game.psnProfilesId || extractPsnProfilesGameId(game.psnProfilesUrl || game.trophy));
     if (!imported?.imageUrl) continue;
+    if (shouldKeepExistingCover(game)) continue;
     if (game.imageUrl === imported.imageUrl && !game.imageData && game.coverSource !== "rawg") continue;
     game.imageUrl = imported.imageUrl;
     game.imageData = "";
@@ -939,8 +941,9 @@ function queueAutoCoverUpgrade() {
 }
 
 function needsBetterCover(game) {
-  const current = String(game.imageUrl || game.imageData || "");
-  return Boolean(game.title && !game.psnProfilesId && !current);
+  if (!game.title || game.imageData) return false;
+  const current = String(game.imageUrl || "");
+  return Boolean(!current || isPsnProfilesCover(current));
 }
 
 async function improveLibraryCoversFromRawg(options = {}) {
@@ -970,14 +973,14 @@ async function improveLibraryCoversFromRawg(options = {}) {
       const url = new URL("https://api.rawg.io/api/games");
       url.searchParams.set("key", key);
       url.searchParams.set("search", game.title);
-      url.searchParams.set("page_size", "1");
+      url.searchParams.set("page_size", "8");
       url.searchParams.set("platforms", RAWG_PLATFORM_IDS[normalizePlatform(game.platform)] || RAWG_PLATFORM_IDS.all);
       url.searchParams.set("search_precise", "false");
 
       const response = await fetch(url);
       if (!response.ok) continue;
       const data = await response.json();
-      const result = data.results?.[0];
+      const result = chooseBestRawgCoverResult(game, data.results || []);
       if (!result?.background_image) continue;
 
       game.imageUrl = result.background_image;
@@ -1007,6 +1010,43 @@ async function improveLibraryCoversFromRawg(options = {}) {
       button.textContent = originalText;
     }, silent ? 800 : 2000);
   }
+}
+
+function chooseBestRawgCoverResult(game, results) {
+  const normalizedTitle = normalizeTitle(game.title);
+  const platform = normalizePlatform(game.platform);
+  const candidates = results
+    .filter((result) => result?.background_image)
+    .map((result) => ({
+      result,
+      score:
+        getRawgTitleScore(normalizedTitle, normalizeTitle(result.name)) +
+        getRawgPlatformScore(platform, result.platforms || []) +
+        (Number(result.metacritic || 0) / 10) +
+        (Number(result.rating || 0) * 2) +
+        (result.background_image ? 10 : 0),
+    }))
+    .sort((a, b) => b.score - a.score);
+  return candidates[0]?.result || null;
+}
+
+function getRawgTitleScore(expected, actual) {
+  if (!expected || !actual) return 0;
+  if (actual === expected) return 80;
+  if (actual.includes(expected) || expected.includes(actual)) return 45;
+  const expectedWords = new Set(expected.split(" ").filter((word) => word.length > 2));
+  const actualWords = new Set(actual.split(" ").filter((word) => word.length > 2));
+  const overlap = [...expectedWords].filter((word) => actualWords.has(word)).length;
+  return overlap * 8;
+}
+
+function getRawgPlatformScore(platform, platforms = []) {
+  const names = platforms.map((item) => item.platform?.name || "").join(" ");
+  if (platform === "PS5" && /playstation 5/i.test(names)) return 18;
+  if (platform === "PS4" && /playstation 4/i.test(names)) return 18;
+  if (platform === "Switch" && /nintendo switch/i.test(names)) return 18;
+  if (platform === "PC" && /\bpc\b/i.test(names)) return 18;
+  return 0;
 }
 
 function renderSearchResults(results) {
@@ -1242,7 +1282,7 @@ function parseStandalonePsnProfilesTrophiesFromHtml(html, gameId) {
 function dedupeTrophies(trophies) {
   const seen = new Set();
   return trophies.filter((trophy) => {
-    const key = normalizeTitle(trophy.name);
+    const key = `${normalizeTitle(trophy.group || trophy.section || trophy.pack || trophy.dlc || "")}|${normalizeTitle(trophy.name)}`;
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -1393,6 +1433,7 @@ async function render() {
   renderStats();
   renderView();
   queueTrophyPackSync(game);
+  queueVisibleTrophyPackSync();
 }
 
 function renderSoft() {
@@ -1403,6 +1444,7 @@ function renderSoft() {
   renderTrophies(game);
   renderView();
   queueTrophyPackSync(game);
+  queueVisibleTrophyPackSync();
 }
 
 function fillForm(game) {
@@ -1615,13 +1657,53 @@ function queueTrophyPackSync(game) {
   const cacheKey = getTrophyPackCacheKey(game);
   const psnpUrl = game?.psnProfilesUrl || game?.trophy || "";
   if (!cacheKey || !trophies.length || trophyPackState.cache[cacheKey] || trophyPackState.pending.has(cacheKey)) return;
+  if (trophyPackState.failed.has(cacheKey)) return;
   if (!/^https?:\/\/(www\.)?psnprofiles\.com\/trophies\//i.test(psnpUrl)) return;
   if (trophies.some((trophy) => trophy.group || trophy.section || trophy.pack || trophy.dlc || trophy.dlcName)) return;
 
   trophyPackState.pending.add(cacheKey);
   syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl)
-    .catch(() => {})
+    .catch(() => trophyPackState.failed.add(cacheKey))
     .finally(() => trophyPackState.pending.delete(cacheKey));
+}
+
+function queueVisibleTrophyPackSync() {
+  if (trophyPackState.backgroundQueued) return;
+  trophyPackState.backgroundQueued = true;
+  window.setTimeout(async () => {
+    const candidates = state.games
+      .filter((game) => {
+        const cacheKey = getTrophyPackCacheKey(game);
+        const psnpUrl = game?.psnProfilesUrl || game?.trophy || "";
+        const trophies = getDisplayTrophies(game);
+        return cacheKey &&
+          /^https?:\/\/(www\.)?psnprofiles\.com\/trophies\//i.test(psnpUrl) &&
+          trophies.length &&
+          !trophyPackState.cache[cacheKey] &&
+          !trophyPackState.pending.has(cacheKey) &&
+          !trophyPackState.failed.has(cacheKey) &&
+          !trophies.some((trophy) => trophy.group || trophy.section || trophy.pack || trophy.dlc || trophy.dlcName);
+      })
+      .slice(0, 18);
+
+    for (const game of candidates) {
+      const trophies = getDisplayTrophies(game);
+      const cacheKey = getTrophyPackCacheKey(game);
+      const psnpUrl = game?.psnProfilesUrl || game?.trophy || "";
+      if (!cacheKey || trophyPackState.pending.has(cacheKey)) continue;
+      trophyPackState.pending.add(cacheKey);
+      try {
+        await syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl);
+      } catch {
+        trophyPackState.failed.add(cacheKey);
+        // PSNProfiles puede bloquear lecturas puntuales; dejamos el juego sin romper la app.
+      } finally {
+        trophyPackState.pending.delete(cacheKey);
+      }
+    }
+
+    trophyPackState.backgroundQueued = false;
+  }, 1200);
 }
 
 async function syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl) {
@@ -1660,11 +1742,12 @@ function parseTrophyPacksFromHtml(html, trophies) {
   if (!doc) return {};
 
   const trophyByName = new Map(trophies.map((trophy) => [normalizeTitle(trophy.name), trophy]));
+  const trophyByIndex = new Map(trophies.map((trophy) => [extractTrophySourceIndex(trophy), trophy]).filter(([index]) => index));
   const packMap = {};
 
   for (const section of extractPsnProfilesHtmlSections(doc)) {
     for (const imported of section.trophies) {
-      const trophy = trophyByName.get(normalizeTitle(imported.name));
+      const trophy = trophyByIndex.get(String(imported.sourceIndex)) || trophyByName.get(normalizeTitle(imported.name));
       if (!trophy) continue;
       for (const key of getTrophyPackLookupKeys(trophy)) packMap[key] = section.title;
       if (imported.imageUrl && !trophy.imageUrl) trophy.imageUrl = imported.imageUrl;
@@ -1771,6 +1854,13 @@ function parseTrophyPacksFromText(text, trophies) {
   }
 
   return packMap;
+}
+
+function extractTrophySourceIndex(trophy) {
+  const direct = trophy?.sourceIndex || trophy?.index || trophy?.order;
+  if (direct) return String(direct);
+  const match = String(trophy?.id || "").match(/-(\d+)(?:-[^-]+)?$/);
+  return match ? match[1] : "";
 }
 
 function extractTrophyPackName(line) {
