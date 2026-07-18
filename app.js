@@ -14,6 +14,11 @@ const RAWG_PLATFORM_IDS = {
 // Rangos comprobados directamente contra la estructura de PSNProfiles.
 // Permiten conservar Juego base/DLC incluso cuando PSNProfiles bloquea una lectura puntual.
 const PSN_TROPHY_PACK_RANGES = {
+  "23918-marvels-spider-man-2": [["Base Game",1,42],["New Game+",43,43]],
+  "11786-marvels-spider-man-remastered": [["Base Game",1,51],["New Game+",52,53],["CTNS: The Heist",54,60],["CTNS: Turf Wars",61,67],["CTNS: Silver Lining",68,74],["Remastered",75,79]],
+  "8143-marvels-spider-man": [["Base Game",1,51],["New Game+",52,53],["CTNS: The Heist",54,60],["CTNS: Turf Wars",61,67],["CTNS: Silver Lining",68,74]],
+  "36583-dying-light-the-beast": [["Base Game",1,31],["New Game+ & Legendary Levels",32,34],["Nightmare",35,36],["Restored Land",37,43]],
+  "15146-dying-light-2-stay-human": [["Base Game",1,58],["Bloody Ties",59,66]],
   "36989-ghost-of-yōtei": [["Base Game",1,54],["New Game+",55,56],["Legends",57,62]],
   "42262-call-of-duty-black-ops-ii": [["Base Game",1,51],["Revolution",52,61],["Uprising",62,71],["Vengeance",72,81],["Apocalypse",82,91]],
   "23281-blasphemous-ii": [["Base Game",1,46],["Mea Culpa",47,55],["The Third Sin",56,60]],
@@ -189,7 +194,14 @@ function init() {
     addNewGame();
   });
 
-  elements.vaultSearch.addEventListener("input", renderList);
+  let catalogSearchTimer = 0;
+  elements.vaultSearch.addEventListener("input", () => {
+    renderList();
+    window.clearTimeout(catalogSearchTimer);
+    const query = elements.vaultSearch.value.trim();
+    if (query.length < 2) return;
+    catalogSearchTimer = window.setTimeout(() => openCatalogSearchFromGlobal(), 650);
+  });
   elements.vaultSearch.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -270,9 +282,17 @@ function init() {
     elements.settingsDialog.showModal();
   });
 
+  let rawgKeyTimer = 0;
   elements.rawgKey.addEventListener("input", () => {
-    localStorage.setItem(RAWG_KEY_STORAGE, elements.rawgKey.value.trim());
+    const key = elements.rawgKey.value.trim();
+    localStorage.setItem(RAWG_KEY_STORAGE, key);
     updateRawgKeyStatus();
+    window.clearTimeout(rawgKeyTimer);
+    if (!key) return;
+    rawgKeyTimer = window.setTimeout(() => {
+      queueAutoCoverUpgrade();
+      if (state.view === "search") searchRawgGames();
+    }, 700);
   });
 
   elements.clearRawgKeyButton.addEventListener("click", () => {
@@ -474,9 +494,11 @@ function getBundledTrophyMap() {
 }
 
 function findBundledTrophiesForGame(game, trophyMap = getBundledTrophyMap()) {
+  const titleMatch = findBundledPsnProfilesGameByTitle(game?.title, game?.platform);
   const keys = [
     game.psnProfilesId,
     extractPsnProfilesGameId(game.psnProfilesUrl || game.trophy),
+    titleMatch?.psnProfilesId,
     normalizeTitle(game.title),
   ].filter(Boolean);
   for (const key of keys) {
@@ -950,7 +972,12 @@ async function searchRawgGames() {
   const query = (elements.gameSearch.value || elements.vaultSearch.value).trim();
 
   if (!key) {
-    elements.searchResults.innerHTML = `<p class="muted">Necesitas una API key gratis de RAWG.</p>`;
+    elements.searchResults.innerHTML = `
+      <div class="empty-state">
+        <p>Activa una vez la conexiÃ³n con RAWG para buscar fuera de tu biblioteca y descargar portadas en alta calidad.</p>
+        <button id="configureRawgButton" class="primary" type="button">Conectar RAWG</button>
+      </div>`;
+    document.querySelector("#configureRawgButton")?.addEventListener("click", () => elements.settingsDialog.showModal());
     elements.catalogEmptyState.hidden = true;
     return;
   }
@@ -1167,6 +1194,8 @@ async function applyRawgGame(result) {
 
   if (result.background_image) {
     game.imageUrl = result.background_image;
+    game.coverSource = "rawg";
+    game.coverMatchVersion = RAWG_COVER_MATCH_VERSION;
     try {
       game.imageData = await imageUrlToDataUrl(result.background_image);
     } catch {
@@ -1186,9 +1215,9 @@ async function applyRawgGame(result) {
       psnProfilesId: psnMatch.psnProfilesId,
       trophiesEarned: psnMatch.trophiesEarned,
       trophiesTotal: psnMatch.trophiesTotal,
-      imageUrl: psnMatch.imageUrl || game.imageUrl,
-      imageData: psnMatch.imageUrl ? "" : game.imageData,
-      coverSource: psnMatch.imageUrl ? "psnprofiles" : game.coverSource,
+      imageUrl: game.imageUrl || psnMatch.imageUrl,
+      imageData: game.imageData || "",
+      coverSource: game.imageUrl ? "rawg" : "psnprofiles",
       rarity: psnMatch.rarity || game.rarity,
       notes: mergeNotes(game.notes, psnMatch.notes),
     });
@@ -1205,12 +1234,19 @@ async function applyRawgGame(result) {
   await render();
 }
 
-function findBundledPsnProfilesGameByTitle(title) {
+function findBundledPsnProfilesGameByTitle(title, platform = "") {
   const games = Array.isArray(window.CARPE_PSNPROFILES_IMPORT) ? window.CARPE_PSNPROFILES_IMPORT : [];
   const normalizedTitle = normalizeTitle(title);
   if (!normalizedTitle) return null;
-  return games.find((game) => normalizeTitle(game.title) === normalizedTitle) ||
-    games.find((game) => normalizeTitle(game.title).includes(normalizedTitle) || normalizedTitle.includes(normalizeTitle(game.title)));
+  const normalizedPlatform = normalizePlatform(platform);
+  const exactMatches = games.filter((game) => normalizeTitle(game.title) === normalizedTitle);
+  return exactMatches.find((game) => !normalizedPlatform || normalizePlatform(game.platform) === normalizedPlatform) ||
+    exactMatches[0] ||
+    games.find((game) => {
+      const candidate = normalizeTitle(game.title);
+      return candidate.length >= 6 && normalizedTitle.length >= 6 &&
+        (candidate.includes(normalizedTitle) || normalizedTitle.includes(candidate));
+    });
 }
 
 async function importPsnProfilesTrophySetForGame(game, title) {
@@ -1989,7 +2025,7 @@ function createReadonlyTrophyRow(trophy) {
     const type = trophy.type || "Trofeo";
     const proxiedImage = getReliableRemoteImageUrl(trophy.imageUrl);
     const image = trophy.imageUrl
-      ? `<img src="${escapeHtml(proxiedImage)}" data-original-src="${escapeHtml(trophy.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=this.dataset.originalSrc" />`
+      ? `<img src="${escapeHtml(proxiedImage)}" data-original-src="${escapeHtml(trophy.imageUrl)}" alt="" loading="eager" referrerpolicy="no-referrer" onerror="if(!this.dataset.retry){this.dataset.retry='1';this.src=this.dataset.originalSrc}else{this.replaceWith(document.createTextNode('${getTrophyTypeIcon(type)}'))}" />`
       : `<span>${getTrophyTypeIcon(type)}</span>`;
     const typeIconUrl = getPsnProfilesTrophyTypeIconUrl(type);
     const typeIcon = typeIconUrl
