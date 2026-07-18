@@ -1,4 +1,5 @@
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 
@@ -26,8 +27,75 @@ function safePath(urlPath) {
   return filePath;
 }
 
+function sendJson(res, status, payload) {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Access-Control-Allow-Origin": "*",
+  });
+  res.end(JSON.stringify(payload));
+}
+
+function proxyRemote(req, res, target, allowedHosts, contentType) {
+  let remote;
+  try {
+    remote = new URL(target);
+  } catch {
+    sendJson(res, 400, { error: "URL no valida" });
+    return;
+  }
+
+  if (remote.protocol !== "https:" || !allowedHosts.has(remote.hostname)) {
+    sendJson(res, 403, { error: "Destino no permitido" });
+    return;
+  }
+
+  const upstream = https.get(remote, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
+      "Accept": contentType === "text/html; charset=utf-8" ? "text/html,application/xhtml+xml" : "image/avif,image/webp,image/png,image/jpeg,*/*",
+      "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+    },
+  }, (upstreamResponse) => {
+    if ((upstreamResponse.statusCode === 301 || upstreamResponse.statusCode === 302) && upstreamResponse.headers.location) {
+      proxyRemote(req, res, new URL(upstreamResponse.headers.location, remote).href, allowedHosts, contentType);
+      upstreamResponse.resume();
+      return;
+    }
+
+    if (upstreamResponse.statusCode !== 200) {
+      upstreamResponse.resume();
+      sendJson(res, upstreamResponse.statusCode || 502, { error: `El origen respondio ${upstreamResponse.statusCode || 502}` });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": upstreamResponse.headers["content-type"] || contentType,
+      "Cache-Control": contentType.startsWith("image/") ? "public, max-age=86400" : "no-store",
+      "Access-Control-Allow-Origin": "*",
+    });
+    upstreamResponse.pipe(res);
+  });
+
+  upstream.setTimeout(20000, () => upstream.destroy(new Error("Tiempo de espera agotado")));
+  upstream.on("error", (error) => sendJson(res, 502, { error: error.message }));
+}
+
 http
   .createServer((req, res) => {
+    const requestUrl = new URL(req.url || "/", `http://${host}:${port}`);
+    if (requestUrl.pathname === "/api/psnprofiles") {
+      const target = requestUrl.searchParams.get("url") || "";
+      proxyRemote(req, res, target, new Set(["psnprofiles.com", "www.psnprofiles.com"]), "text/html; charset=utf-8");
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/image") {
+      const target = requestUrl.searchParams.get("url") || "";
+      proxyRemote(req, res, target, new Set(["img.psnprofiles.com", "media.rawg.io"]), "image/png");
+      return;
+    }
+
     const requested = safePath(req.url || "/");
     const filePath = requested && fs.existsSync(requested) && fs.statSync(requested).isDirectory()
       ? path.join(requested, "index.html")

@@ -1,13 +1,48 @@
 const STORAGE_KEY = "carpeVerseVault.games.v1";
 const RAWG_KEY_STORAGE = "carpeVerseVault.rawgKey.v1";
+const RAWG_COVER_MATCH_VERSION = 2;
 const PSNPROFILES_USER_STORAGE = "carpeVerseVault.psnProfilesUser.v1";
-const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v2";
+const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v3";
 const RAWG_PLATFORM_IDS = {
   all: "4,7,18,187",
   PS5: "187",
   PS4: "18",
   Switch: "7",
   PC: "4",
+};
+
+// Rangos comprobados directamente contra la estructura de PSNProfiles.
+// Permiten conservar Juego base/DLC incluso cuando PSNProfiles bloquea una lectura puntual.
+const PSN_TROPHY_PACK_RANGES = {
+  "36989-ghost-of-yōtei": [["Base Game",1,54],["New Game+",55,56],["Legends",57,62]],
+  "42262-call-of-duty-black-ops-ii": [["Base Game",1,51],["Revolution",52,61],["Uprising",62,71],["Vengeance",72,81],["Apocalypse",82,91]],
+  "23281-blasphemous-ii": [["Base Game",1,46],["Mea Culpa",47,55],["The Third Sin",56,60]],
+  "3140-lego-batman-3-beyond-gotham": [["Base Game",1,41],["Man of Steel",42,46],["Batman 75th Anniversary",47,51],["Dark Knight",52,56],["Arrow",57,61],["Bizarro",62,66],["The Squad",67,71]],
+  "28905-star-wars-outlaws": [["Base Game",1,50],["Wild Card",51,54],["A Pirate's Fortune",55,60]],
+  "15437-cyberpunk-2077": [["Base Game",1,45],["Phantom Liberty",46,58]],
+  "11172-cuphead": [["Base Game",1,29],["The Delicious Last Course",30,43]],
+  "24347-alan-wake-ii": [["Base Game",1,67],["Night Springs",68,79],["The Lake House",80,89]],
+  "35281-killing-floor-3": [["Base Game",1,34],["Operation: Breakout",35,35],["Operation: Deep Freeze",36,42],["Onslaught Update",43,43]],
+  "37071-battlefield-6": [["Base Game",1,43],["BATTLEFIELD REDSEC",44,54]],
+  "5673-stardew-valley": [["Base Game",1,41],["1.6 Update",42,50]],
+  "26710-another-crabs-treasure": [["Base Game",1,33],["Year of the Crab",34,39]],
+  "3679-rocket-league": [["Base Game",1,36],["Utopia Coliseum",37,39],["Supersonic Fury",40,45],["Revenge of the Battle-Cars",46,50],["Chaos Run",51,55],["Neo Tokyo",56,63],["AquaDome",64,70],["Dropshot",71,76],["Champions Field",77,82],["Clubs Update",83,88]],
+  "18848-call-of-duty-hq": [["Base Game",1,25],["Call of Duty Modern Warfare III",26,64],["Call of Duty Black Ops 6",65,108],["Call of Duty: Black Ops 7",109,158]],
+  "22963-remnant-ii": [["Base Game",1,51],["The Awakened King",52,56],["The Forgotten Kingdom",57,61],["The Dark Horizon",62,66]],
+  "20832-powerwash-simulator": [["Base Game",1,41],["SpongeBob SquarePants Special",42,51],["Back to the Future Special",52,61],["Warhammer 40,000 Special",62,71],["Alice's Adventures Special",72,81],["Shrek Special",82,91],["Wallace & Gromit Special",92,101]],
+  "14122-alan-wake": [["Base Game",1,51],["The Signal",52,59],["The Writer",60,68]],
+  "21316-dredge": [["Base Game",1,40],["The Pale Reach",41,48],["The Iron Rig",49,60]],
+  "21836-minecraft-legends": [["Base Game",1,31],["Holiday 2023 Update",32,41]],
+  "13285-doom-eternal": [["Base Game",1,34],["The Ancient Gods 1",35,41],["The Ancient Gods 2",42,48],["Horde Mode",49,51]],
+  "33804-doom-the-dark-ages": [["Base Game",1,29],["Revelations",30,39]],
+  "24104-lords-of-the-fallen": [["Base Game",1,63],["Master of Fate",64,72],["Conqueror of Hardships",73,77]],
+  "23013-high-on-life": [["Base Game",1,33],["High On Knife",34,45]],
+  "25399-prince-of-persia-the-lost-crown": [["Base Game",1,31],["Mask of Darkness",32,42]],
+  "15777-ghostwire-tokyo": [["Base Game",1,57],["Spider's Thread Update",58,67]],
+  "3091-the-binding-of-isaac-rebirth": [["Base Game",1,59],["Afterbirth",60,66],["Afterbirth+",67,73],["Repentance",74,80]],
+  "24064-hot-wheels-unleashed-2-turbocharged": [["Base Game",1,44],["AcceleRacers Expansion",45,47],["Made in Italy Expansion",48,50],["Fast & Furious Expansion",51,53],["Alien Encounters Expansion",54,56]],
+  "5776-resident-evil-7-biohazard": [["Base Game",1,38],["Banned Footage Vol. 1",39,43],["Banned Footage Vol. 2",44,51],["End of Zoe",52,57],["Not a Hero",58,59]],
+  "3303-dying-light": [["Base Game",1,51],["Parkour Fever",52,54],["The Bozak Horde",55,59],["The Following",60,69]],
 };
 
 const sampleGames = [
@@ -337,6 +372,7 @@ function init() {
   elements.addTrophyButton?.addEventListener("click", addBlankTrophy);
 
   render();
+  queueAutoCoverUpgrade();
 }
 
 function setActiveViewButton(view) {
@@ -452,7 +488,19 @@ function findBundledTrophiesForGame(game, trophyMap = getBundledTrophyMap()) {
 function getDisplayTrophies(game) {
   const bundled = findBundledTrophiesForGame(game);
   const trophies = bundled.length ? bundled : Array.isArray(game.trophies) ? game.trophies : [];
-  return applyCachedTrophyPacks(game, trophies);
+  return applyCachedTrophyPacks(game, applyVerifiedTrophyRanges(game, trophies));
+}
+
+function applyVerifiedTrophyRanges(game, trophies) {
+  const gameKey = game?.psnProfilesId || extractPsnProfilesGameId(game?.psnProfilesUrl || game?.trophy);
+  const ranges = PSN_TROPHY_PACK_RANGES[gameKey];
+  if (!ranges?.length) return trophies;
+
+  return trophies.map((trophy, index) => {
+    const sourceIndex = index + 1;
+    const range = ranges.find(([, start, end]) => sourceIndex >= start && sourceIndex <= end);
+    return range ? { ...trophy, group: range[0], sourceIndex } : trophy;
+  });
 }
 
 function applyCachedTrophyPacks(game, trophies) {
@@ -460,7 +508,15 @@ function applyCachedTrophyPacks(game, trophies) {
   if (!packMap) return trophies;
   return trophies.map((trophy) => {
     const key = getTrophyPackLookupKeys(trophy).find((item) => packMap[item]);
-    return key ? { ...trophy, group: packMap[key] } : trophy;
+    if (!key) return trophy;
+    const imported = packMap[key];
+    if (typeof imported === "string") return { ...trophy, group: imported };
+    return {
+      ...trophy,
+      group: imported.group || trophy.group || "Base Game",
+      imageUrl: imported.imageUrl || trophy.imageUrl || "",
+      type: imported.type || trophy.type || "Trofeo",
+    };
   });
 }
 
@@ -943,7 +999,7 @@ function queueAutoCoverUpgrade() {
 function needsBetterCover(game) {
   if (!game.title || game.imageData) return false;
   const current = String(game.imageUrl || "");
-  return Boolean(!current || isPsnProfilesCover(current));
+  return Boolean(!current || isPsnProfilesCover(current) || Number(game.coverMatchVersion || 0) < RAWG_COVER_MATCH_VERSION);
 }
 
 async function improveLibraryCoversFromRawg(options = {}) {
@@ -986,6 +1042,7 @@ async function improveLibraryCoversFromRawg(options = {}) {
       game.imageUrl = result.background_image;
       game.imageData = "";
       game.coverSource = "rawg";
+      game.coverMatchVersion = RAWG_COVER_MATCH_VERSION;
       game.rawgId = result.id;
       game.rawgSlug = result.slug;
       game.rawgReleased = result.released || game.rawgReleased;
@@ -1017,27 +1074,35 @@ function chooseBestRawgCoverResult(game, results) {
   const platform = normalizePlatform(game.platform);
   const candidates = results
     .filter((result) => result?.background_image)
-    .map((result) => ({
+    .map((result) => {
+      const titleScore = getRawgTitleScore(normalizedTitle, normalizeTitle(result.name));
+      return {
       result,
+      titleScore,
       score:
-        getRawgTitleScore(normalizedTitle, normalizeTitle(result.name)) +
+        titleScore +
         getRawgPlatformScore(platform, result.platforms || []) +
         (Number(result.metacritic || 0) / 10) +
         (Number(result.rating || 0) * 2) +
         (result.background_image ? 10 : 0),
-    }))
+      };
+    })
+    .filter((candidate) => candidate.titleScore >= 60)
     .sort((a, b) => b.score - a.score);
   return candidates[0]?.result || null;
 }
 
 function getRawgTitleScore(expected, actual) {
   if (!expected || !actual) return 0;
-  if (actual === expected) return 80;
-  if (actual.includes(expected) || expected.includes(actual)) return 45;
-  const expectedWords = new Set(expected.split(" ").filter((word) => word.length > 2));
-  const actualWords = new Set(actual.split(" ").filter((word) => word.length > 2));
+  if (actual === expected) return 100;
+  const expectedWords = new Set(expected.split(" ").filter((word) => word.length > 1));
+  const actualWords = new Set(actual.split(" ").filter((word) => word.length > 1));
   const overlap = [...expectedWords].filter((word) => actualWords.has(word)).length;
-  return overlap * 8;
+  const expectedCoverage = overlap / Math.max(expectedWords.size, 1);
+  const actualCoverage = overlap / Math.max(actualWords.size, 1);
+  if (expectedCoverage === 1 && actualCoverage >= 0.8) return 90;
+  if (expectedCoverage >= 0.8 && actualCoverage >= 0.8) return 75;
+  return Math.round(Math.min(expectedCoverage, actualCoverage) * 50);
 }
 
 function getRawgPlatformScore(platform, platforms = []) {
@@ -1709,8 +1774,8 @@ function queueVisibleTrophyPackSync() {
 async function syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl) {
   const text = await fetchPsnProfilesTrophyText(psnpUrl);
   const packMap = parseTrophyPacksFromSource(text, trophies);
-  const packNames = new Set(Object.values(packMap));
-  if (!packMap || packNames.size <= 1) return;
+  const importedValues = Object.values(packMap || {});
+  if (!importedValues.length) return;
   trophyPackState.cache[cacheKey] = packMap;
   saveTrophyPackCache();
   if (getSelectedGame()?.id === game.id) renderSoft();
@@ -1720,7 +1785,9 @@ async function fetchPsnProfilesTrophyText(psnpUrl) {
   const gameId = extractPsnProfilesGameId(psnpUrl);
   const cleanUrl = gameId ? `https://psnprofiles.com/trophies/${gameId}` : psnpUrl.replace(/\/[^/]+$/, "");
   const hostPath = cleanUrl.replace(/^https?:\/\//, "");
+  const localProxy = `http://127.0.0.1:8788/api/psnprofiles?url=${encodeURIComponent(cleanUrl)}`;
   const text = await fetchTextFromFallbackUrls([
+    localProxy,
     cleanUrl,
     `https://r.jina.ai/http://${hostPath}`,
     `https://r.jina.ai/http://https://${hostPath}`,
@@ -1749,9 +1816,12 @@ function parseTrophyPacksFromHtml(html, trophies) {
     for (const imported of section.trophies) {
       const trophy = trophyByIndex.get(String(imported.sourceIndex)) || trophyByName.get(normalizeTitle(imported.name));
       if (!trophy) continue;
-      for (const key of getTrophyPackLookupKeys(trophy)) packMap[key] = section.title;
-      if (imported.imageUrl && !trophy.imageUrl) trophy.imageUrl = imported.imageUrl;
-      if (imported.type && (!trophy.type || /^trofeo$/i.test(trophy.type))) trophy.type = imported.type;
+      const metadata = {
+        group: section.title,
+        imageUrl: imported.imageUrl || trophy.imageUrl || "",
+        type: imported.type || trophy.type || "Trofeo",
+      };
+      for (const key of getTrophyPackLookupKeys(trophy)) packMap[key] = metadata;
     }
   }
 
@@ -1764,9 +1834,10 @@ function extractPsnProfilesHtmlSections(doc) {
     .filter((table) => table.querySelector("a.title[href*='/trophy/']"));
 
   for (const table of trophyTables) {
-    const headerTable = table.previousElementSibling?.matches?.("table.zebra") &&
-      !table.previousElementSibling.querySelector("a.title[href*='/trophy/']")
-      ? table.previousElementSibling
+    const previousTable = table.previousElementSibling;
+    const headerTable = previousTable?.matches?.("table.zebra") &&
+      !previousTable.querySelector("a.title[href*='/trophy/']")
+      ? previousTable
       : table;
     const headerRow = headerTable.querySelector("tr");
     const title = extractPsnProfilesSectionTitle(headerRow);
@@ -1903,12 +1974,22 @@ function getAbsolutePsnProfilesImageUrl(src) {
   return value;
 }
 
+function getReliableRemoteImageUrl(src) {
+  const value = String(src || "").trim();
+  if (!value) return "";
+  if (/^https:\/\/img\.psnprofiles\.com\/trophy\/s\//i.test(value)) {
+    return value.replace("/trophy/s/", "/trophy/m/");
+  }
+  return value;
+}
+
 function createReadonlyTrophyRow(trophy) {
     const row = document.createElement("div");
     row.className = `trophy-row trophy-row-readonly ${trophy.earned ? "earned" : ""}`;
     const type = trophy.type || "Trofeo";
+    const proxiedImage = getReliableRemoteImageUrl(trophy.imageUrl);
     const image = trophy.imageUrl
-      ? `<img src="${escapeHtml(trophy.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+      ? `<img src="${escapeHtml(proxiedImage)}" data-original-src="${escapeHtml(trophy.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=this.dataset.originalSrc" />`
       : `<span>${getTrophyTypeIcon(type)}</span>`;
     const typeIconUrl = getPsnProfilesTrophyTypeIconUrl(type);
     const typeIcon = typeIconUrl
