@@ -1,6 +1,6 @@
 const STORAGE_KEY = "carpeVerseVault.games.v1";
 const RAWG_KEY_STORAGE = "carpeVerseVault.rawgKey.v1";
-const RAWG_COVER_MATCH_VERSION = 2;
+const RAWG_COVER_MATCH_VERSION = 3;
 const PSNPROFILES_USER_STORAGE = "carpeVerseVault.psnProfilesUser.v1";
 const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v3";
 const RAWG_PLATFORM_IDS = {
@@ -48,6 +48,7 @@ const PSN_TROPHY_PACK_RANGES = {
   "24064-hot-wheels-unleashed-2-turbocharged": [["Base Game",1,44],["AcceleRacers Expansion",45,47],["Made in Italy Expansion",48,50],["Fast & Furious Expansion",51,53],["Alien Encounters Expansion",54,56]],
   "5776-resident-evil-7-biohazard": [["Base Game",1,38],["Banned Footage Vol. 1",39,43],["Banned Footage Vol. 2",44,51],["End of Zoe",52,57],["Not a Hero",58,59]],
   "3303-dying-light": [["Base Game",1,51],["Parkour Fever",52,54],["The Bozak Horde",55,59],["The Following",60,69]],
+  "8671-resident-evil-2": [["Base Game",1,42],["The Ghost Survivors",43,44],["Another Survivor",45,45]],
 };
 
 const sampleGames = [
@@ -860,6 +861,9 @@ function chooseBestCover(primary, fallback) {
 }
 
 function restorePsnProfilesCovers() {
+  // Cuando RAWG está conectado, PSNProfiles solo aporta trofeos: sus miniaturas
+  // son demasiado pequeñas para las tarjetas grandes de la biblioteca.
+  if (elements.rawgKey?.value.trim()) return;
   const imports = Array.isArray(window.CARPE_PSNPROFILES_IMPORT) ? window.CARPE_PSNPROFILES_IMPORT : [];
   const byId = new Map(imports.filter((game) => game.psnProfilesId).map((game) => [game.psnProfilesId, game]));
   let changed = false;
@@ -1019,7 +1023,7 @@ function queueAutoCoverUpgrade() {
   const pending = state.games.some((game) => needsBetterCover(game));
   if (!pending) return;
   window.setTimeout(() => {
-    improveLibraryCoversFromRawg({ silent: true, limit: 60 });
+    improveLibraryCoversFromRawg({ silent: true, limit: 100 });
   }, 900);
 }
 
@@ -1050,40 +1054,67 @@ async function improveLibraryCoversFromRawg(options = {}) {
       return;
     }
 
-    for (const game of targets) {
-      checked += 1;
-      button.textContent = `Portadas ${checked}/${targets.length}`;
-      const url = new URL("https://api.rawg.io/api/games");
-      url.searchParams.set("key", key);
-      url.searchParams.set("search", game.title);
-      url.searchParams.set("page_size", "8");
-      url.searchParams.set("platforms", RAWG_PLATFORM_IDS[normalizePlatform(game.platform)] || RAWG_PLATFORM_IDS.all);
-      url.searchParams.set("search_precise", "false");
+    let cursor = 0;
+    const updateGameCover = async () => {
+      while (cursor < targets.length) {
+        const game = targets[cursor];
+        cursor += 1;
+        checked += 1;
+        button.textContent = `Portadas ${checked}/${targets.length}`;
 
-      const response = await fetch(url);
-      if (!response.ok) continue;
-      const data = await response.json();
-      const result = chooseBestRawgCoverResult(game, data.results || []);
-      if (!result?.background_image) continue;
+        try {
+          const url = new URL("https://api.rawg.io/api/games");
+          url.searchParams.set("key", key);
+          url.searchParams.set("search", game.title);
+          url.searchParams.set("page_size", "8");
+          url.searchParams.set("platforms", RAWG_PLATFORM_IDS[normalizePlatform(game.platform)] || RAWG_PLATFORM_IDS.all);
+          url.searchParams.set("search_precise", "false");
 
-      game.imageUrl = result.background_image;
-      game.imageData = "";
-      game.coverSource = "rawg";
-      game.coverMatchVersion = RAWG_COVER_MATCH_VERSION;
-      game.rawgId = result.id;
-      game.rawgSlug = result.slug;
-      game.rawgReleased = result.released || game.rawgReleased;
-      game.rawgRating = result.rating || game.rawgRating;
-      game.updatedAt = Date.now();
-      improved += 1;
-    }
+          let response = await fetch(url);
+          if (!response.ok) continue;
+          let data = await response.json();
+          let result = chooseBestRawgCoverResult(game, data.results || []);
+
+          // Algunos juegos cross-buy aparecen en PSN como PS5 aunque RAWG solo los
+          // catalogue en PS4/PS3. Reintentamos por título sin limitar plataforma.
+          if (!result?.background_image) {
+            url.searchParams.delete("platforms");
+            response = await fetch(url);
+            if (!response.ok) continue;
+            data = await response.json();
+            result = chooseBestRawgCoverResult(game, data.results || []);
+          }
+
+          if (!result?.background_image) {
+            game.coverMatchVersion = RAWG_COVER_MATCH_VERSION;
+            continue;
+          }
+
+          game.imageUrl = result.background_image;
+          game.imageData = "";
+          game.coverSource = "rawg";
+          game.coverMatchVersion = RAWG_COVER_MATCH_VERSION;
+          game.rawgId = result.id;
+          game.rawgSlug = result.slug;
+          game.rawgReleased = result.released || game.rawgReleased;
+          game.rawgRating = result.rating || game.rawgRating;
+          game.updatedAt = Date.now();
+          improved += 1;
+        } catch {
+          // Una portada que falle no debe detener la renovación del resto.
+        }
+      }
+    };
+
+    const workers = Math.min(6, targets.length);
+    await Promise.all(Array.from({ length: workers }, () => updateGameCover()));
 
     saveGames();
     render();
     const remaining = state.games.filter(needsBetterCover).length;
     button.textContent = improved ? `Mejoradas ${improved}` : "Sin cambios";
     if (remaining && silent) {
-      window.setTimeout(() => improveLibraryCoversFromRawg({ silent: true, limit: 60 }), 1500);
+      window.setTimeout(() => improveLibraryCoversFromRawg({ silent: true, limit: 100 }), 1200);
     }
   } catch (error) {
     button.textContent = "Error portadas";
@@ -1804,6 +1835,16 @@ function queueVisibleTrophyPackSync() {
     }
 
     trophyPackState.backgroundQueued = false;
+    const remaining = state.games.some((game) => {
+      const cacheKey = getTrophyPackCacheKey(game);
+      const trophies = getDisplayTrophies(game);
+      return cacheKey && trophies.length &&
+        !trophyPackState.cache[cacheKey] &&
+        !trophyPackState.pending.has(cacheKey) &&
+        !trophyPackState.failed.has(cacheKey) &&
+        !trophies.some((trophy) => trophy.group || trophy.section || trophy.pack || trophy.dlc || trophy.dlcName);
+    });
+    if (remaining) queueVisibleTrophyPackSync();
   }, 1200);
 }
 
