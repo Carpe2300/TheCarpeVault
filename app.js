@@ -11,6 +11,21 @@ const RAWG_PLATFORM_IDS = {
   PC: "4",
 };
 
+// Juegos cuyo nombre es ambiguo en RAWG. Solo estas fichas se fuerzan; las
+// portadas que ya están bien no se vuelven a tocar.
+const RAWG_COVER_OVERRIDES = {
+  "241-god-of-war": { search: "God of War I", slug: "god-of-war", revision: 1 },
+  "7523-god-of-war": { search: "God of War 2018", slug: "god-of-war-2", revision: 1 },
+  "40071-resident-evil-requiem": { search: "Resident Evil 9 Requiem", slug: "resident-evil-9-requiem", revision: 1 },
+  "5776-resident-evil-7-biohazard": { search: "Resident Evil 7 Biohazard", slug: "resident-evil-7-biohazard", revision: 1 },
+  "21539-resident-evil-4": { search: "Resident Evil 4 2023", slug: "resident-evil-4-2023", revision: 1 },
+  "12873-resident-evil-village": { search: "Resident Evil Village", slug: "resident-evil-village", revision: 1 },
+  "4389-resident-evil-6": { search: "Resident Evil 6", slug: "resident-evil-6", revision: 1 },
+  "10633-resident-evil-3": { search: "Resident Evil 3 2020", slug: "resident-evil-3", revision: 1 },
+  "4850-resident-evil-5": { search: "Resident Evil 5", slug: "resident-evil-5-biohazard-5", revision: 1 },
+  "8671-resident-evil-2": { search: "Resident Evil 2 2019", slug: "resident-evil-2-2019", revision: 1 },
+};
+
 // Rangos comprobados directamente contra la estructura de PSNProfiles.
 // Permiten conservar Juego base/DLC incluso cuando PSNProfiles bloquea una lectura puntual.
 const PSN_TROPHY_PACK_RANGES = {
@@ -49,6 +64,10 @@ const PSN_TROPHY_PACK_RANGES = {
   "5776-resident-evil-7-biohazard": [["Base Game",1,38],["Banned Footage Vol. 1",39,43],["Banned Footage Vol. 2",44,51],["End of Zoe",52,57],["Not a Hero",58,59]],
   "3303-dying-light": [["Base Game",1,51],["Parkour Fever",52,54],["The Bozak Horde",55,59],["The Following",60,69]],
   "8671-resident-evil-2": [["Base Game",1,42],["The Ghost Survivors",43,44],["Another Survivor",45,45]],
+  "21539-resident-evil-4": [["Base Game",1,40],["Separate Ways",41,47]],
+  "12873-resident-evil-village": [["Base Game",1,50],["Winters' Expansion",51,57]],
+  "4389-resident-evil-6": [["Base Game",1,51],["Onslaught",52,56],["Survivors",57,61],["Predator",62,66],["Siege",67,71]],
+  "4850-resident-evil-5": [["Base Game",1,51],["Versus Pack",52,61],["Lost in Nightmares",62,66],["Desperate Escape",67,71]],
 };
 
 const sampleGames = [
@@ -511,7 +530,8 @@ function findBundledTrophiesForGame(game, trophyMap = getBundledTrophyMap()) {
 function getDisplayTrophies(game) {
   const bundled = findBundledTrophiesForGame(game);
   const trophies = bundled.length ? bundled : Array.isArray(game.trophies) ? game.trophies : [];
-  return applyCachedTrophyPacks(game, applyVerifiedTrophyRanges(game, trophies));
+  // Los rangos revisados manualmente prevalecen sobre una lectura antigua de caché.
+  return applyVerifiedTrophyRanges(game, applyCachedTrophyPacks(game, trophies));
 }
 
 function applyVerifiedTrophyRanges(game, trophies) {
@@ -1030,7 +1050,20 @@ function queueAutoCoverUpgrade() {
 function needsBetterCover(game) {
   if (!game.title || game.imageData) return false;
   const current = String(game.imageUrl || "");
-  return Boolean(!current || isPsnProfilesCover(current) || Number(game.coverMatchVersion || 0) < RAWG_COVER_MATCH_VERSION);
+  const override = RAWG_COVER_OVERRIDES[getRawgCoverOverrideKey(game)];
+  if (override) {
+    return Boolean(
+      !current ||
+      isPsnProfilesCover(current) ||
+      Number(game.coverOverrideRevision || 0) < override.revision ||
+      (game.coverSource === "rawg" && game.rawgSlug !== override.slug)
+    );
+  }
+  return Boolean(!current || isPsnProfilesCover(current));
+}
+
+function getRawgCoverOverrideKey(game) {
+  return game?.psnProfilesId || extractPsnProfilesGameId(game?.psnProfilesUrl || game?.trophy);
 }
 
 async function improveLibraryCoversFromRawg(options = {}) {
@@ -1063,9 +1096,10 @@ async function improveLibraryCoversFromRawg(options = {}) {
         button.textContent = `Portadas ${checked}/${targets.length}`;
 
         try {
+          const override = RAWG_COVER_OVERRIDES[getRawgCoverOverrideKey(game)];
           const url = new URL("https://api.rawg.io/api/games");
           url.searchParams.set("key", key);
-          url.searchParams.set("search", game.title);
+          url.searchParams.set("search", override?.search || game.title);
           url.searchParams.set("page_size", "8");
           url.searchParams.set("platforms", RAWG_PLATFORM_IDS[normalizePlatform(game.platform)] || RAWG_PLATFORM_IDS.all);
           url.searchParams.set("search_precise", "false");
@@ -1085,8 +1119,22 @@ async function improveLibraryCoversFromRawg(options = {}) {
             result = chooseBestRawgCoverResult(game, data.results || []);
           }
 
+          // Las excepciones verificadas consultan también la ficha canónica. Así
+          // evitamos conservar una miniatura de PSN si la búsqueda no devuelve
+          // el juego exacto entre sus primeros resultados.
+          if (override && result?.slug !== override.slug) {
+            const exactUrl = new URL(`https://api.rawg.io/api/games/${override.slug}`);
+            exactUrl.searchParams.set("key", key);
+            const exactResponse = await fetch(exactUrl);
+            if (exactResponse.ok) {
+              const exactResult = await exactResponse.json();
+              if (exactResult?.background_image) result = exactResult;
+            }
+          }
+
           if (!result?.background_image) {
             game.coverMatchVersion = RAWG_COVER_MATCH_VERSION;
+            if (override) game.coverOverrideRevision = override.revision;
             continue;
           }
 
@@ -1096,6 +1144,7 @@ async function improveLibraryCoversFromRawg(options = {}) {
           game.coverMatchVersion = RAWG_COVER_MATCH_VERSION;
           game.rawgId = result.id;
           game.rawgSlug = result.slug;
+          if (override) game.coverOverrideRevision = override.revision;
           game.rawgReleased = result.released || game.rawgReleased;
           game.rawgRating = result.rating || game.rawgRating;
           game.updatedAt = Date.now();
@@ -1109,6 +1158,7 @@ async function improveLibraryCoversFromRawg(options = {}) {
     const workers = Math.min(6, targets.length);
     await Promise.all(Array.from({ length: workers }, () => updateGameCover()));
 
+    dedupeLibraryGames();
     saveGames();
     render();
     const remaining = state.games.filter(needsBetterCover).length;
@@ -1128,6 +1178,11 @@ async function improveLibraryCoversFromRawg(options = {}) {
 }
 
 function chooseBestRawgCoverResult(game, results) {
+  const override = RAWG_COVER_OVERRIDES[getRawgCoverOverrideKey(game)];
+  if (override) {
+    const exactOverride = results.find((result) => result?.slug === override.slug && result?.background_image);
+    if (exactOverride) return exactOverride;
+  }
   const normalizedTitle = normalizeTitle(game.title);
   const platform = normalizePlatform(game.platform);
   const candidates = results
