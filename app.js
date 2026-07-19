@@ -744,6 +744,7 @@ function mergePsnProfilesGames(importedGames) {
   let updated = 0;
 
   for (const imported of importedGames) {
+    const reusableCover = findReusableRawgCover(imported);
     const existing = state.games.find((game) => {
       if (imported.psnProfilesId && game.psnProfilesId === imported.psnProfilesId) return true;
       return normalizeTitle(game.title) === normalizeTitle(imported.title) && normalizePlatform(game.platform) === normalizePlatform(imported.platform);
@@ -756,8 +757,12 @@ function mergePsnProfilesGames(importedGames) {
         status: imported.status,
         progress: imported.progress,
         trophy: imported.psnProfilesUrl || existing.trophy,
-        imageUrl: shouldKeepExistingCover(existing) ? existing.imageUrl : imported.imageUrl || existing.imageUrl,
+        imageUrl: shouldKeepExistingCover(existing) ? existing.imageUrl : reusableCover?.imageUrl || imported.imageUrl || existing.imageUrl,
         imageData: existing.imageData || imported.imageData || "",
+        coverSource: shouldKeepExistingCover(existing) ? existing.coverSource : reusableCover ? "rawg" : existing.coverSource,
+        rawgId: existing.rawgId || reusableCover?.rawgId,
+        rawgSlug: existing.rawgSlug || reusableCover?.rawgSlug,
+        coverMatchVersion: existing.coverMatchVersion || reusableCover?.coverMatchVersion,
         psnProfilesUrl: imported.psnProfilesUrl,
         psnProfilesId: imported.psnProfilesId || existing.psnProfilesId,
         trophiesEarned: imported.trophiesEarned,
@@ -780,7 +785,11 @@ function mergePsnProfilesGames(importedGames) {
         rarity: imported.status === "Platino" ? "Platino" : "PSNProfiles",
         notes: imported.notes,
         imageData: "",
-        imageUrl: imported.imageUrl || "",
+        imageUrl: reusableCover?.imageUrl || imported.imageUrl || "",
+        coverSource: reusableCover ? "rawg" : "psnprofiles",
+        rawgId: reusableCover?.rawgId,
+        rawgSlug: reusableCover?.rawgSlug,
+        coverMatchVersion: reusableCover?.coverMatchVersion,
         trophies: [],
         psnProfilesUrl: imported.psnProfilesUrl,
         psnProfilesId: imported.psnProfilesId,
@@ -904,6 +913,20 @@ function restorePsnProfilesCovers() {
 
 function isPsnProfilesCover(url) {
   return String(url || "").includes("img.psnprofiles.com/game/");
+}
+
+function findReusableRawgCover(imported) {
+  if (RAWG_COVER_OVERRIDES[getRawgCoverOverrideKey(imported)]) return null;
+  const title = normalizeTitle(imported?.title);
+  const total = Number(imported?.trophiesTotal || 0);
+  if (!title) return null;
+
+  return state.games.find((game) => {
+    if (normalizeTitle(game.title) !== title) return false;
+    if (total && Number(game.trophiesTotal || 0) && Number(game.trophiesTotal) !== total) return false;
+    if (!game.imageUrl || isPsnProfilesCover(game.imageUrl)) return false;
+    return Boolean(game.coverSource === "rawg" || game.rawgId || game.rawgSlug);
+  }) || null;
 }
 
 function shouldKeepExistingCover(game) {
