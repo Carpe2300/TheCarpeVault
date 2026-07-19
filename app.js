@@ -3,6 +3,8 @@ const RAWG_KEY_STORAGE = "carpeVerseVault.rawgKey.v1";
 const RAWG_COVER_MATCH_VERSION = 3;
 const PSNPROFILES_USER_STORAGE = "carpeVerseVault.psnProfilesUser.v1";
 const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v3";
+const LAST_SYNC_STORAGE = "carpeVerseVault.lastSync.v1";
+const BACKUP_SCHEMA_VERSION = 1;
 const RAWG_PLATFORM_IDS = {
   all: "4,7,18,187",
   PS5: "187",
@@ -131,6 +133,8 @@ const trophyPackState = {
   failed: new Set(),
 };
 
+let deferredInstallPrompt = null;
+
 const elements = {
   statPlatinums: document.querySelector("#statPlatinums"),
   statProgress: document.querySelector("#statProgress"),
@@ -143,6 +147,13 @@ const elements = {
   vaultSearch: document.querySelector("#vaultSearchInput"),
   settingsButton: document.querySelector("#settingsButton"),
   settingsDialog: document.querySelector("#settingsDialog"),
+  connectionStatus: document.querySelector("#connectionStatus"),
+  installAppButton: document.querySelector("#installAppButton"),
+  exportBackupButton: document.querySelector("#exportBackupButton"),
+  importBackupButton: document.querySelector("#importBackupButton"),
+  backupFileInput: document.querySelector("#backupFileInput"),
+  backupStatus: document.querySelector("#backupStatus"),
+  lastSyncStatus: document.querySelector("#lastSyncStatus"),
   rawgKey: document.querySelector("#rawgKeyInput"),
   rawgKeyStatus: document.querySelector("#rawgKeyStatus"),
   clearRawgKeyButton: document.querySelector("#clearRawgKeyButton"),
@@ -199,10 +210,12 @@ function init() {
   dedupeLibraryGames();
   saveGames();
   state.selectedId = state.games[0]?.id || "";
-  elements.rawgKey.value = localStorage.getItem(RAWG_KEY_STORAGE) || "";
+  elements.rawgKey.value = "";
   elements.psnProfilesInput.value = localStorage.getItem(PSNPROFILES_USER_STORAGE) || "";
   updateRawgKeyStatus();
   updatePsnProfilesConnection();
+  updateLastSyncStatus();
+  setupPwa();
   importBundledPsnProfilesData();
   restorePsnProfilesCovers();
 
@@ -301,6 +314,11 @@ function init() {
   elements.settingsButton.addEventListener("click", () => {
     elements.settingsDialog.showModal();
   });
+
+  elements.installAppButton?.addEventListener("click", installPwa);
+  elements.exportBackupButton?.addEventListener("click", exportVaultBackup);
+  elements.importBackupButton?.addEventListener("click", () => elements.backupFileInput?.click());
+  elements.backupFileInput?.addEventListener("change", importVaultBackup);
 
   let rawgKeyTimer = 0;
   elements.rawgKey.addEventListener("input", () => {
@@ -415,6 +433,118 @@ function init() {
   queueAutoCoverUpgrade();
 }
 
+function setupPwa() {
+  updateConnectionStatus();
+  window.addEventListener("online", updateConnectionStatus);
+  window.addEventListener("offline", updateConnectionStatus);
+
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    if (elements.installAppButton) {
+      elements.installAppButton.disabled = false;
+      elements.installAppButton.textContent = "Instalar app";
+    }
+  });
+
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    if (elements.installAppButton) {
+      elements.installAppButton.disabled = true;
+      elements.installAppButton.textContent = "App instalada";
+    }
+  });
+
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  if (standalone && elements.installAppButton) {
+    elements.installAppButton.disabled = true;
+    elements.installAppButton.textContent = "App instalada";
+  }
+
+  if ("serviceWorker" in navigator && /^https?:$/i.test(window.location.protocol)) {
+    navigator.serviceWorker.register("./sw.js").catch(() => {
+      // La app continúa funcionando aunque el navegador no permita modo offline.
+    });
+  }
+}
+
+function updateConnectionStatus() {
+  if (!elements.connectionStatus) return;
+  const online = navigator.onLine;
+  elements.connectionStatus.textContent = online ? "En línea" : "Sin conexión";
+  elements.connectionStatus.classList.toggle("offline", !online);
+}
+
+async function installPwa() {
+  if (deferredInstallPrompt) {
+    await deferredInstallPrompt.prompt();
+    const choice = await deferredInstallPrompt.userChoice;
+    if (choice?.outcome === "accepted") deferredInstallPrompt = null;
+    return;
+  }
+
+  alert("En Android: abre el menú del navegador y pulsa ‘Añadir a pantalla de inicio’. En iPhone: Compartir → Añadir a pantalla de inicio.");
+}
+
+function exportVaultBackup() {
+  const backup = {
+    app: "The Carpe Vault",
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    psnProfilesUser: getPsnProfilesUser(),
+    lastSync: localStorage.getItem(LAST_SYNC_STORAGE) || "",
+    games: state.games,
+    trophyPacks: trophyPackState.cache,
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `the-carpe-vault-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  if (elements.backupStatus) elements.backupStatus.textContent = `Copia creada: ${new Date().toLocaleString("es-ES")}`;
+}
+
+async function importVaultBackup(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (file.size > 25 * 1024 * 1024) {
+    alert("La copia es demasiado grande. El límite es 25 MB.");
+    return;
+  }
+
+  try {
+    const backup = JSON.parse(await file.text());
+    if (backup?.app !== "The Carpe Vault" || !Array.isArray(backup.games) || backup.games.length > 5000) {
+      throw new Error("El archivo no es una copia válida de The Carpe Vault.");
+    }
+    if (!confirm(`Se sustituirá la biblioteca actual por la copia de ${backup.games.length} juegos. ¿Continuar?`)) return;
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(backup.games.map(stripStoredTrophies)));
+    localStorage.setItem(TROPHY_PACKS_STORAGE, JSON.stringify(backup.trophyPacks && typeof backup.trophyPacks === "object" ? backup.trophyPacks : {}));
+    if (backup.psnProfilesUser) localStorage.setItem(PSNPROFILES_USER_STORAGE, cleanPsnProfilesUser(backup.psnProfilesUser));
+    if (backup.lastSync) localStorage.setItem(LAST_SYNC_STORAGE, String(backup.lastSync));
+    window.location.reload();
+  } catch (error) {
+    if (elements.backupStatus) elements.backupStatus.textContent = `No se pudo restaurar: ${error.message}`;
+    alert(error.message || "No se pudo restaurar la copia.");
+  }
+}
+
+function updateLastSyncStatus() {
+  if (!elements.lastSyncStatus) return;
+  const value = localStorage.getItem(LAST_SYNC_STORAGE);
+  const date = value ? new Date(value) : null;
+  elements.lastSyncStatus.textContent = date && !Number.isNaN(date.getTime())
+    ? `Última sincronización: ${date.toLocaleString("es-ES")}`
+    : "Todavía no se ha sincronizado";
+  elements.lastSyncStatus.classList.toggle("ok", Boolean(date && !Number.isNaN(date.getTime())));
+}
+
 function setActiveViewButton(view) {
   document.querySelectorAll(".nav-link").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === view);
@@ -429,7 +559,7 @@ function renderView() {
 }
 
 function updateRawgKeyStatus() {
-  const key = elements.rawgKey.value.trim();
+  const key = getRawgKey();
   if (key) {
     elements.rawgKeyStatus.textContent = `API key guardada · ${maskKey(key)}`;
     elements.rawgKeyStatus.classList.add("ok");
@@ -437,6 +567,10 @@ function updateRawgKeyStatus() {
     elements.rawgKeyStatus.textContent = "Sin key guardada";
     elements.rawgKeyStatus.classList.remove("ok");
   }
+}
+
+function getRawgKey() {
+  return elements.rawgKey?.value.trim() || localStorage.getItem(RAWG_KEY_STORAGE) || "";
 }
 
 function cleanPsnProfilesUser(value) {
@@ -598,6 +732,9 @@ async function importPsnProfilesGames() {
     saveGames();
     state.view = "library";
     setActiveViewButton("library");
+    const syncedAt = new Date();
+    localStorage.setItem(LAST_SYNC_STORAGE, syncedAt.toISOString());
+    updateLastSyncStatus();
     render();
     elements.psnSummaryText.textContent = `Importados ${result.created} nuevos y actualizados ${result.updated}. Última lectura: ${new Date().toLocaleString("es-ES")}.`;
   } catch (error) {
@@ -892,7 +1029,7 @@ function chooseBestCover(primary, fallback) {
 function restorePsnProfilesCovers() {
   // Cuando RAWG está conectado, PSNProfiles solo aporta trofeos: sus miniaturas
   // son demasiado pequeñas para las tarjetas grandes de la biblioteca.
-  if (elements.rawgKey?.value.trim()) return;
+  if (getRawgKey()) return;
   const imports = Array.isArray(window.CARPE_PSNPROFILES_IMPORT) ? window.CARPE_PSNPROFILES_IMPORT : [];
   const byId = new Map(imports.filter((game) => game.psnProfilesId).map((game) => [game.psnProfilesId, game]));
   let changed = false;
@@ -1015,7 +1152,7 @@ function maskKey(key) {
 }
 
 async function searchRawgGames() {
-  const key = elements.rawgKey.value.trim();
+  const key = getRawgKey();
   const query = (elements.gameSearch.value || elements.vaultSearch.value).trim();
 
   if (!key) {
@@ -1061,7 +1198,7 @@ async function searchRawgGames() {
 }
 
 function queueAutoCoverUpgrade() {
-  const key = elements.rawgKey.value.trim();
+  const key = getRawgKey();
   if (!key) return;
   const pending = state.games.some((game) => needsBetterCover(game));
   if (!pending) return;
@@ -1091,7 +1228,7 @@ function getRawgCoverOverrideKey(game) {
 
 async function improveLibraryCoversFromRawg(options = {}) {
   const { silent = false, limit = Infinity } = options;
-  const key = elements.rawgKey.value.trim();
+  const key = getRawgKey();
   if (!key) {
     if (!silent) elements.settingsDialog.showModal();
     return;

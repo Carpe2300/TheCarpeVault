@@ -1,0 +1,20 @@
+{
+  "name": "The Carpe Vault",
+  "short_name": "Carpe Vault",
+  "description": "Tu biblioteca privada de juegos, progreso y trofeos.",
+  "lang": "es",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d0c10",
+  "theme_color": "#0d0c10",
+  "icons": [
+    {
+      "src": "./assets/carpe-vault-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

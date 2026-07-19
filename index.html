@@ -3,8 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0d0c10" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Carpe Vault" />
     <title>The Carpe Vault</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="icon" href="./assets/carpe-vault-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./assets/the-carpe-verse-logo.png" />
+    <link rel="stylesheet" href="./styles.css?v=5" />
   </head>
   <body>
     <main class="app-shell">
@@ -17,6 +24,7 @@
           <input id="vaultSearchInput" placeholder="Busca en tu biblioteca y en el catálogo RAWG..." />
         </label>
         <div class="top-actions">
+          <span id="connectionStatus" class="connection-status" title="Estado de conexión">En línea</span>
           <button id="settingsButton" class="ghost icon-button" type="button" title="Configuración">⚙</button>
         </div>
       </header>
@@ -253,7 +261,7 @@
           </p>
           <label>
             RAWG API key
-            <input id="rawgKeyInput" autocomplete="off" placeholder="Pega tu key gratis de RAWG" />
+            <input id="rawgKeyInput" type="password" autocomplete="off" placeholder="Pega tu key gratis de RAWG" />
           </label>
           <div class="key-row">
             <span id="rawgKeyStatus" class="key-status">Sin key guardada</span>
@@ -267,6 +275,34 @@
             <span id="psnProfilesStatus" class="key-status">PSNProfiles sin conectar</span>
             <button id="clearPsnProfilesButton" class="tiny ghost" type="button">Borrar PSNP</button>
           </div>
+          <section class="settings-section">
+            <div>
+              <p class="eyebrow">Aplicación</p>
+              <h3>Instalar en el móvil</h3>
+              <p class="muted">Añade The Carpe Vault a la pantalla de inicio y úsala como una app.</p>
+            </div>
+            <button id="installAppButton" class="primary" type="button">Instalar app</button>
+          </section>
+          <section class="settings-section settings-section-stack">
+            <div>
+              <p class="eyebrow">Tus datos</p>
+              <h3>Copia de seguridad</h3>
+              <p class="muted">Guarda juegos, progreso y DLC. La clave de RAWG no se incluye.</p>
+            </div>
+            <div class="settings-actions">
+              <button id="exportBackupButton" type="button">Descargar copia</button>
+              <button id="importBackupButton" class="ghost" type="button">Restaurar copia</button>
+              <input id="backupFileInput" type="file" accept="application/json,.json" hidden />
+            </div>
+            <span id="backupStatus" class="key-status">Sin copias restauradas en esta sesión</span>
+          </section>
+          <section class="settings-section settings-section-stack">
+            <div>
+              <p class="eyebrow">Sincronización</p>
+              <h3>Estado de PSNProfiles</h3>
+            </div>
+            <span id="lastSyncStatus" class="key-status">Todavía no se ha sincronizado</span>
+          </section>
           <input id="gameSearchInput" class="hidden-input" tabindex="-1" aria-hidden="true" />
           <button id="searchGameButton" class="hidden-input" type="button" tabindex="-1" aria-hidden="true">Buscar</button>
         </form>
@@ -275,6 +311,6 @@
 
     <script src="./psnprofiles-import.js"></script>
     <script src="./psnprofiles-trophies.js"></script>
-    <script src="./app.js?v=4"></script>
+    <script src="./app.js?v=5"></script>
   </body>
 </html>
