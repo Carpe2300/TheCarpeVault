@@ -17,6 +17,7 @@ Ejecuta `abrir-carpe-vault.bat`. La aplicación se abrirá en `http://127.0.0.1:
 - Caché de la interfaz y los datos importados para poder abrirla sin conexión.
 - Copia de seguridad JSON y restauración desde Configuración.
 - Registro de la última sincronización correcta con PSNProfiles.
+- Sincronización automática al abrir la app, recuperar Internet o volver tras seis horas; solo refresca el detalle de los juegos cuyo progreso haya cambiado.
 
 ## Seguridad y datos
 

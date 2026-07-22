@@ -4,7 +4,10 @@ const RAWG_COVER_MATCH_VERSION = 3;
 const PSNPROFILES_USER_STORAGE = "carpeVerseVault.psnProfilesUser.v1";
 const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v3";
 const LAST_SYNC_STORAGE = "carpeVerseVault.lastSync.v1";
+const LAST_SYNC_ATTEMPT_STORAGE = "carpeVerseVault.lastSyncAttempt.v1";
 const BACKUP_SCHEMA_VERSION = 1;
+const PSN_AUTO_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const PSN_AUTO_SYNC_CHECK_MS = 30 * 60 * 1000;
 const RAWG_PLATFORM_IDS = {
   all: "4,7,18,187",
   PS5: "187",
@@ -134,6 +137,7 @@ const trophyPackState = {
 };
 
 let deferredInstallPrompt = null;
+let psnProfilesSyncInFlight = false;
 
 const elements = {
   statPlatinums: document.querySelector("#statPlatinums"),
@@ -218,6 +222,7 @@ function init() {
   setupPwa();
   importBundledPsnProfilesData();
   restorePsnProfilesCovers();
+  setupAutomaticPsnProfilesSync();
 
   elements.newGameButton?.addEventListener("click", () => {
     addNewGame();
@@ -360,7 +365,7 @@ function init() {
   });
 
   elements.syncPsnProfileButton.addEventListener("click", () => {
-    importPsnProfilesGames();
+    importPsnProfilesGames({ silent: false });
   });
 
   elements.improveCoversButton.addEventListener("click", improveLibraryCoversFromRawg);
@@ -545,6 +550,33 @@ function updateLastSyncStatus() {
   elements.lastSyncStatus.classList.toggle("ok", Boolean(date && !Number.isNaN(date.getTime())));
 }
 
+function setupAutomaticPsnProfilesSync() {
+  const requestSync = () => {
+    void maybeAutoSyncPsnProfiles();
+  };
+
+  window.setTimeout(requestSync, 1800);
+  window.setInterval(requestSync, PSN_AUTO_SYNC_CHECK_MS);
+  window.addEventListener("online", requestSync);
+  window.addEventListener("focus", requestSync);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") requestSync();
+  });
+}
+
+async function maybeAutoSyncPsnProfiles() {
+  if (!getPsnProfilesUser() || psnProfilesSyncInFlight || !navigator.onLine) return;
+
+  const lastSync = new Date(localStorage.getItem(LAST_SYNC_STORAGE) || 0).getTime();
+  if (Number.isFinite(lastSync) && Date.now() - lastSync < PSN_AUTO_SYNC_INTERVAL_MS) return;
+
+  const lastAttempt = new Date(localStorage.getItem(LAST_SYNC_ATTEMPT_STORAGE) || 0).getTime();
+  if (Number.isFinite(lastAttempt) && Date.now() - lastAttempt < PSN_AUTO_SYNC_CHECK_MS) return;
+
+  localStorage.setItem(LAST_SYNC_ATTEMPT_STORAGE, new Date().toISOString());
+  await importPsnProfilesGames({ silent: true });
+}
+
 function setActiveViewButton(view) {
   document.querySelectorAll(".nav-link").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === view);
@@ -583,7 +615,21 @@ function cleanPsnProfilesUser(value) {
 }
 
 function getPsnProfilesUser() {
-  return cleanPsnProfilesUser(elements.psnProfilesInput?.value || localStorage.getItem(PSNPROFILES_USER_STORAGE));
+  return cleanPsnProfilesUser(
+    elements.psnProfilesInput?.value ||
+    localStorage.getItem(PSNPROFILES_USER_STORAGE) ||
+    getBundledPsnProfilesUser(),
+  );
+}
+
+function getBundledPsnProfilesUser() {
+  const games = Array.isArray(window.CARPE_PSNPROFILES_IMPORT) ? window.CARPE_PSNPROFILES_IMPORT : [];
+  for (const game of games) {
+    const match = String(game?.psnProfilesUrl || game?.trophy || "")
+      .match(/psnprofiles\.com\/trophies\/[^/]+\/([^/?#]+)/i);
+    if (match?.[1]) return decodeURIComponent(match[1]);
+  }
+  return "";
 }
 
 function getPsnProfilesUrl(user) {
@@ -708,17 +754,23 @@ function getTrophyPackLookupKeys(trophy) {
   ].filter(Boolean);
 }
 
-async function importPsnProfilesGames() {
+async function importPsnProfilesGames({ silent = false } = {}) {
   const user = getPsnProfilesUser();
   if (!user) {
-    elements.settingsDialog.showModal();
-    return;
+    if (!silent) elements.settingsDialog.showModal();
+    return false;
   }
 
+  if (psnProfilesSyncInFlight) return false;
+  psnProfilesSyncInFlight = true;
+
   const originalText = elements.syncPsnProfileButton.textContent;
-  elements.syncPsnProfileButton.textContent = "Importando...";
+  const previousSummary = elements.psnSummaryText.textContent;
+  elements.syncPsnProfileButton.textContent = "Sincronizando...";
   elements.syncPsnProfileButton.disabled = true;
-  elements.psnSummaryText.textContent = "Leyendo tu perfil público de PSNProfiles...";
+  elements.psnSummaryText.textContent = silent
+    ? "Sincronizando automáticamente con PSNProfiles..."
+    : "Leyendo tu perfil público de PSNProfiles...";
 
   try {
     const profileText = await fetchPsnProfilesProfile(user);
@@ -728,27 +780,73 @@ async function importPsnProfilesGames() {
       throw new Error("No he encontrado juegos en el perfil público. Puede que PSNProfiles haya cambiado el formato o esté bloqueando la lectura.");
     }
 
+    const changedImports = importedGames.filter(hasPsnProfilesProgressChanged);
     const result = mergePsnProfilesGames(importedGames);
+    const trophyUpdates = await syncChangedPsnProfilesTrophies(changedImports);
     saveGames();
-    state.view = "library";
-    setActiveViewButton("library");
+    if (!silent) {
+      state.view = "library";
+      setActiveViewButton("library");
+    }
     const syncedAt = new Date();
     localStorage.setItem(LAST_SYNC_STORAGE, syncedAt.toISOString());
     updateLastSyncStatus();
     render();
-    elements.psnSummaryText.textContent = `Importados ${result.created} nuevos y actualizados ${result.updated}. Última lectura: ${new Date().toLocaleString("es-ES")}.`;
+    const detailText = trophyUpdates ? ` Detalle actualizado en ${trophyUpdates} juego${trophyUpdates === 1 ? "" : "s"}.` : "";
+    elements.psnSummaryText.textContent = `Sincronización completa: ${result.created} nuevos y ${result.updated} revisados.${detailText} Última lectura: ${new Date().toLocaleString("es-ES")}.`;
+    return true;
   } catch (error) {
-    elements.psnSummaryText.textContent = `No he podido importar: ${error.message}`;
-    alert(`No he podido importar desde PSNProfiles.\n\n${error.message}`);
+    elements.psnSummaryText.textContent = silent ? previousSummary : `No he podido importar: ${error.message}`;
+    if (!silent) alert(`No he podido importar desde PSNProfiles.\n\n${error.message}`);
+    return false;
   } finally {
-    elements.syncPsnProfileButton.textContent = originalText || "Importar juegos";
+    psnProfilesSyncInFlight = false;
+    elements.syncPsnProfileButton.textContent = originalText || "Sincronizar ahora";
     elements.syncPsnProfileButton.disabled = !getPsnProfilesUser();
   }
 }
 
+function hasPsnProfilesProgressChanged(imported) {
+  const existing = findExistingLibraryGame(imported);
+  if (!existing) return true;
+  return Number(existing.progress || 0) !== Number(imported.progress || 0) ||
+    Number(existing.trophiesEarned || 0) !== Number(imported.trophiesEarned || 0) ||
+    Number(existing.trophiesTotal || 0) !== Number(imported.trophiesTotal || 0);
+}
+
+async function syncChangedPsnProfilesTrophies(changedImports, limit = 8) {
+  let updated = 0;
+
+  for (const imported of changedImports.slice(0, limit)) {
+    const game = findExistingLibraryGame(imported);
+    const psnpUrl = imported.psnProfilesUrl || game?.psnProfilesUrl || "";
+    if (!game || !/^https?:\/\/(www\.)?psnprofiles\.com\/trophies\/\d+[^/]*\/[^/]+/i.test(psnpUrl)) continue;
+
+    try {
+      const text = await fetchPsnProfilesTrophyText(psnpUrl, { preserveUser: true });
+      const trophies = parseStandalonePsnProfilesTrophies(text, imported.psnProfilesId || game.psnProfilesId);
+      if (!trophies.length) continue;
+
+      game.trophies = trophies;
+      game.trophiesEarned = trophies.filter((trophy) => trophy.earned).length;
+      game.trophiesTotal = trophies.length;
+      game.updatedAt = Date.now();
+      delete trophyPackState.cache[getTrophyPackCacheKey(game)];
+      updated += 1;
+    } catch {
+      // Un bloqueo puntual de PSNProfiles no debe detener el resto de la sincronización.
+    }
+  }
+
+  if (updated) saveTrophyPackCache();
+  return updated;
+}
+
 async function fetchPsnProfilesProfile(user) {
   const profileUrl = getPsnProfilesUrl(user);
+  const localProxy = `http://127.0.0.1:8788/api/psnprofiles?url=${encodeURIComponent(profileUrl)}`;
   const urls = [
+    localProxy,
     profileUrl,
     `https://r.jina.ai/http://${profileUrl.replace(/^https?:\/\//, "")}`,
     `https://r.jina.ai/http://http://${profileUrl.replace(/^https?:\/\//, "")}`,
@@ -2073,9 +2171,11 @@ async function syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl)
   if (getSelectedGame()?.id === game.id) renderSoft();
 }
 
-async function fetchPsnProfilesTrophyText(psnpUrl) {
+async function fetchPsnProfilesTrophyText(psnpUrl, { preserveUser = false } = {}) {
   const gameId = extractPsnProfilesGameId(psnpUrl);
-  const cleanUrl = gameId ? `https://psnprofiles.com/trophies/${gameId}` : psnpUrl.replace(/\/[^/]+$/, "");
+  const cleanUrl = preserveUser
+    ? psnpUrl
+    : gameId ? `https://psnprofiles.com/trophies/${gameId}` : psnpUrl.replace(/\/[^/]+$/, "");
   const hostPath = cleanUrl.replace(/^https?:\/\//, "");
   const localProxy = `http://127.0.0.1:8788/api/psnprofiles?url=${encodeURIComponent(cleanUrl)}`;
   const text = await fetchTextFromFallbackUrls([
