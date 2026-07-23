@@ -37,6 +37,25 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function getSnapshotMetadata() {
+  const snapshots = ["psnprofiles-import.js", "psnprofiles-trophies.js"].map((name) => {
+    const filePath = path.join(root, name);
+    if (!fs.existsSync(filePath)) return { name, exists: false };
+    const stats = fs.statSync(filePath);
+    return {
+      name,
+      exists: true,
+      bytes: stats.size,
+      updatedAt: stats.mtime.toISOString(),
+    };
+  });
+  const available = snapshots.every((snapshot) => snapshot.exists);
+  const updatedAt = available
+    ? snapshots.map((snapshot) => snapshot.updatedAt).sort().at(-1)
+    : null;
+  return { available, updatedAt, files: snapshots };
+}
+
 function proxyRemote(req, res, target, allowedHosts, contentType) {
   let remote;
   try {
@@ -85,6 +104,11 @@ function proxyRemote(req, res, target, allowedHosts, contentType) {
 http
   .createServer((req, res) => {
     const requestUrl = new URL(req.url || "/", `http://${host}:${port}`);
+    if (requestUrl.pathname === "/api/snapshot-meta") {
+      sendJson(res, 200, getSnapshotMetadata());
+      return;
+    }
+
     if (requestUrl.pathname === "/api/psnprofiles") {
       const target = requestUrl.searchParams.get("url") || "";
       proxyRemote(req, res, target, new Set(["psnprofiles.com", "www.psnprofiles.com"]), "text/html; charset=utf-8");

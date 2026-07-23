@@ -5,6 +5,8 @@ const PSNPROFILES_USER_STORAGE = "carpeVerseVault.psnProfilesUser.v1";
 const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v3";
 const LAST_SYNC_STORAGE = "carpeVerseVault.lastSync.v1";
 const LAST_SYNC_ATTEMPT_STORAGE = "carpeVerseVault.lastSyncAttempt.v1";
+const LAST_SYNC_SOURCE_STORAGE = "carpeVerseVault.lastSyncSource.v1";
+const LAST_SYNC_SNAPSHOT_STORAGE = "carpeVerseVault.lastSyncSnapshot.v1";
 const BACKUP_SCHEMA_VERSION = 1;
 const PSN_AUTO_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const PSN_AUTO_SYNC_CHECK_MS = 30 * 60 * 1000;
@@ -544,8 +546,14 @@ function updateLastSyncStatus() {
   if (!elements.lastSyncStatus) return;
   const value = localStorage.getItem(LAST_SYNC_STORAGE);
   const date = value ? new Date(value) : null;
+  const source = localStorage.getItem(LAST_SYNC_SOURCE_STORAGE);
+  const sourceLabel = source === "live"
+    ? " · lectura directa"
+    : source === "snapshot"
+      ? " · copia automática"
+      : "";
   elements.lastSyncStatus.textContent = date && !Number.isNaN(date.getTime())
-    ? `Última sincronización: ${date.toLocaleString("es-ES")}`
+    ? `Última sincronización: ${date.toLocaleString("es-ES")}${sourceLabel}`
     : "Todavía no se ha sincronizado";
   elements.lastSyncStatus.classList.toggle("ok", Boolean(date && !Number.isNaN(date.getTime())));
 }
@@ -770,9 +778,29 @@ async function importPsnProfilesGames({ silent = false } = {}) {
   elements.syncPsnProfileButton.disabled = true;
   elements.psnSummaryText.textContent = silent
     ? "Sincronizando automáticamente con PSNProfiles..."
-    : "Leyendo tu perfil público de PSNProfiles...";
+    : "Cargando la última sincronización automática...";
 
   try {
+    if (!silent) {
+      const snapshot = await reloadBundledPsnProfilesSnapshot();
+      if (snapshot.available) {
+        const syncedAt = new Date();
+        localStorage.setItem(LAST_SYNC_STORAGE, syncedAt.toISOString());
+        localStorage.setItem(LAST_SYNC_SOURCE_STORAGE, "snapshot");
+        if (snapshot.updatedAt) {
+          localStorage.setItem(LAST_SYNC_SNAPSHOT_STORAGE, snapshot.updatedAt);
+        }
+        updateLastSyncStatus();
+        render();
+        const snapshotDate = snapshot.updatedAt
+          ? new Date(snapshot.updatedAt).toLocaleString("es-ES")
+          : "más reciente";
+        elements.psnSummaryText.textContent = `Datos actualizados con la copia automática ${snapshotDate}. ${snapshot.created} juegos nuevos y ${snapshot.updated} revisados.`;
+        return true;
+      }
+      elements.psnSummaryText.textContent = "No encontré una copia automática; intentando la lectura directa de PSNProfiles...";
+    }
+
     const profileText = await fetchPsnProfilesProfile(user);
     const importedGames = parsePsnProfilesGames(profileText, user);
 
@@ -781,7 +809,10 @@ async function importPsnProfilesGames({ silent = false } = {}) {
     }
 
     const changedImports = importedGames.filter(hasPsnProfilesProgressChanged);
+    const librarySizeBefore = state.games.length;
     const result = mergePsnProfilesGames(importedGames);
+    dedupeLibraryGames();
+    result.created = Math.max(0, state.games.length - librarySizeBefore);
     const trophyUpdates = await syncChangedPsnProfilesTrophies(changedImports);
     saveGames();
     if (!silent) {
@@ -790,20 +821,96 @@ async function importPsnProfilesGames({ silent = false } = {}) {
     }
     const syncedAt = new Date();
     localStorage.setItem(LAST_SYNC_STORAGE, syncedAt.toISOString());
+    localStorage.setItem(LAST_SYNC_SOURCE_STORAGE, "live");
     updateLastSyncStatus();
     render();
     const detailText = trophyUpdates ? ` Detalle actualizado en ${trophyUpdates} juego${trophyUpdates === 1 ? "" : "s"}.` : "";
     elements.psnSummaryText.textContent = `Sincronización completa: ${result.created} nuevos y ${result.updated} revisados.${detailText} Última lectura: ${new Date().toLocaleString("es-ES")}.`;
     return true;
   } catch (error) {
-    elements.psnSummaryText.textContent = silent ? previousSummary : `No he podido importar: ${error.message}`;
-    if (!silent) alert(`No he podido importar desde PSNProfiles.\n\n${error.message}`);
+    const snapshot = await reloadBundledPsnProfilesSnapshot();
+    if (snapshot.available) {
+      const syncedAt = new Date();
+      localStorage.setItem(LAST_SYNC_STORAGE, syncedAt.toISOString());
+      localStorage.setItem(LAST_SYNC_SOURCE_STORAGE, "snapshot");
+      if (snapshot.updatedAt) {
+        localStorage.setItem(LAST_SYNC_SNAPSHOT_STORAGE, snapshot.updatedAt);
+      }
+      updateLastSyncStatus();
+      render();
+      const snapshotDate = snapshot.updatedAt
+        ? new Date(snapshot.updatedAt).toLocaleString("es-ES")
+        : "disponible";
+      elements.psnSummaryText.textContent = `PSNProfiles bloqueó la lectura directa, pero la biblioteca se ha actualizado con la copia automática del ${snapshotDate}. ${snapshot.created} juegos nuevos y ${snapshot.updated} revisados.`;
+      return true;
+    }
+
+    elements.psnSummaryText.textContent = silent
+      ? previousSummary
+      : "No se pudo leer PSNProfiles ni cargar la copia automática. Revisa la conexión y vuelve a intentarlo.";
     return false;
   } finally {
     psnProfilesSyncInFlight = false;
     elements.syncPsnProfileButton.textContent = originalText || "Sincronizar ahora";
     elements.syncPsnProfileButton.disabled = !getPsnProfilesUser();
   }
+}
+
+async function reloadBundledPsnProfilesSnapshot() {
+  try {
+    const cacheKey = Date.now();
+    await loadFreshSnapshotScript(`./psnprofiles-import.js?v=${cacheKey}`, "CARPE_PSNPROFILES_IMPORT");
+    await loadFreshSnapshotScript(`./psnprofiles-trophies.js?v=${cacheKey}`, "CARPE_PSNPROFILES_TROPHIES");
+
+    const bundledGames = Array.isArray(window.CARPE_PSNPROFILES_IMPORT)
+      ? window.CARPE_PSNPROFILES_IMPORT
+      : [];
+    if (!bundledGames.length) {
+      return { available: false, created: 0, updated: 0, updatedAt: "" };
+    }
+
+    const librarySizeBefore = state.games.length;
+    const result = mergePsnProfilesGames(bundledGames);
+    dedupeLibraryGames();
+    result.created = Math.max(0, state.games.length - librarySizeBefore);
+    saveGames();
+
+    let metadata = {};
+    try {
+      const response = await fetch(`./api/snapshot-meta?v=${cacheKey}`, { cache: "no-store" });
+      if (response.ok) metadata = await response.json();
+    } catch {
+      // La copia sigue siendo utilizable aunque el servidor aún no exponga metadatos.
+    }
+
+    return {
+      available: true,
+      created: result.created,
+      updated: result.updated,
+      updatedAt: metadata.updatedAt || "",
+    };
+  } catch {
+    return { available: false, created: 0, updated: 0, updatedAt: "" };
+  }
+}
+
+function loadFreshSnapshotScript(src, globalName) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.dataset.snapshotGlobal = globalName;
+    script.onload = () => {
+      script.remove();
+      if (window[globalName]) resolve(window[globalName]);
+      else reject(new Error(`La copia ${globalName} no contiene datos.`));
+    };
+    script.onerror = () => {
+      script.remove();
+      reject(new Error(`No se pudo cargar ${src}.`));
+    };
+    document.head.appendChild(script);
+  });
 }
 
 function hasPsnProfilesProgressChanged(imported) {
