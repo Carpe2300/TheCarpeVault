@@ -77,7 +77,7 @@ button.danger {
 
 .topbar {
   display: grid;
-  grid-template-columns: 190px minmax(220px, 1fr) auto;
+  grid-template-columns: 64px minmax(220px, 1fr) auto;
   gap: 18px;
   align-items: center;
   position: sticky;
@@ -92,19 +92,21 @@ button.danger {
 .brand-mark {
   display: flex;
   align-items: center;
-  width: 180px;
+  justify-content: center;
+  width: 54px;
   height: 54px;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  overflow: hidden;
+  border: 1px solid rgba(255, 212, 93, 0.2);
+  border-radius: 16px;
+  background: #050506;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38);
 }
 
 .brand-mark img {
   display: block;
   width: 100%;
-  max-height: 54px;
-  object-fit: contain;
-  object-position: left center;
+  height: 100%;
+  object-fit: cover;
 }
 
 .global-search {

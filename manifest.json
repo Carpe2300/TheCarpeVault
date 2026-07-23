@@ -11,10 +11,10 @@
   "theme_color": "#0d0c10",
   "icons": [
     {
-      "src": "./assets/carpe-vault-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "./assets/the-carpe-verse-logo-square.jpg",
+      "sizes": "150x150",
+      "type": "image/jpeg",
+      "purpose": "any"
     }
   ]
 }
