@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./assets/carpe-vault-icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./assets/the-carpe-verse-logo.png" />
-    <link rel="stylesheet" href="./styles.css?v=5" />
+    <link rel="stylesheet" href="./styles.css?v=6" />
   </head>
   <body>
     <main class="app-shell">
@@ -130,10 +130,9 @@
               </div>
             </section>
             <div class="library-toolbar">
-              <button class="toolbar-chip active" type="button">Orden: añadido</button>
-              <button class="toolbar-chip" type="button">Release date</button>
-              <button class="toolbar-chip" type="button">Platforms</button>
-              <button class="toolbar-chip" type="button">Progress</button>
+              <button class="toolbar-chip active" data-sort="added" type="button">Añadidos</button>
+              <button class="toolbar-chip" data-sort="recent" type="button">Más recientes</button>
+              <button class="toolbar-chip" data-sort="progress" type="button">Progreso</button>
               <button id="improveCoversButton" class="toolbar-chip" type="button">Mejorar portadas</button>
             </div>
             <div id="libraryGrid" class="library-grid"></div>
@@ -311,6 +310,6 @@
 
     <script src="./psnprofiles-import.js"></script>
     <script src="./psnprofiles-trophies.js"></script>
-    <script src="./app.js?v=10"></script>
+    <script src="./app.js?v=11"></script>
   </body>
 </html>

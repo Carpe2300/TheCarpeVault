@@ -7,6 +7,7 @@ const LAST_SYNC_STORAGE = "carpeVerseVault.lastSync.v1";
 const LAST_SYNC_ATTEMPT_STORAGE = "carpeVerseVault.lastSyncAttempt.v1";
 const LAST_SYNC_SOURCE_STORAGE = "carpeVerseVault.lastSyncSource.v1";
 const LAST_SYNC_SNAPSHOT_STORAGE = "carpeVerseVault.lastSyncSnapshot.v1";
+const LIBRARY_SORT_STORAGE = "carpeVerseVault.librarySort.v1";
 const BACKUP_SCHEMA_VERSION = 1;
 const PSN_AUTO_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const PSN_AUTO_SYNC_CHECK_MS = 30 * 60 * 1000;
@@ -129,6 +130,7 @@ const state = {
   selectedId: null,
   filter: "all",
   platformFilter: "all",
+  sort: localStorage.getItem(LIBRARY_SORT_STORAGE) || "added",
   view: "library",
 };
 
@@ -298,6 +300,16 @@ function init() {
       renderList();
     });
   });
+
+  document.querySelectorAll("[data-sort]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.sort = button.dataset.sort || "added";
+      localStorage.setItem(LIBRARY_SORT_STORAGE, state.sort);
+      updateLibrarySortButtons();
+      renderList();
+    });
+  });
+  updateLibrarySortButtons();
 
   document.querySelectorAll(".nav-link").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2644,7 +2656,7 @@ function renderList() {
       normalizePlatform(game.platform) === state.platformFilter;
     const haystack = `${game.title} ${game.platform} ${game.status} ${game.notes}`.toLowerCase();
     return matchesFilter && matchesPlatform && (!query || haystack.includes(query));
-  });
+  }).sort(compareLibraryGames);
   if (elements.gameList) elements.gameList.innerHTML = "";
   elements.libraryGrid.innerHTML = "";
 
@@ -2680,6 +2692,7 @@ function createLibraryCard(game) {
   const lowQualityCover = background && isPsnProfilesCover(background);
   const trophyCount = Number(game.trophiesTotal || 0);
   const trophyDone = Number(game.trophiesEarned || (Array.isArray(game.trophies) ? game.trophies.filter((trophy) => trophy.earned).length : 0));
+  const latestActivity = getGameLatestTrophyAt(game);
   card.innerHTML = `
     <div class="library-cover ${lowQualityCover ? "low-res-cover" : "hero-cover"}">
       ${background ? `<img class="cover-bg" alt="" src="${escapeHtml(background)}" loading="lazy" referrerpolicy="no-referrer" /><img class="cover-main" alt="" src="${escapeHtml(background)}" loading="lazy" referrerpolicy="no-referrer" />` : `<div class="cover-fallback">${escapeHtml((game.title || "?").slice(0, 1))}</div>`}
@@ -2689,6 +2702,7 @@ function createLibraryCard(game) {
       <strong>${escapeHtml(game.title || "Sin título")}</strong>
       <span>${escapeHtml(game.status)} · ${Number(game.progress || 0)}%</span>
       ${trophyCount ? `<small>${trophyDone}/${trophyCount} trofeos</small>` : ""}
+      ${latestActivity ? `<small class="recent-activity">Último trofeo: ${escapeHtml(formatRecentActivity(latestActivity))}</small>` : ""}
       <em class="progress-chip">${Number(game.progress || 0)}% completado</em>
     </div>
   `;
@@ -2709,6 +2723,72 @@ function createLibraryCard(game) {
     await render();
   });
   return card;
+}
+
+function updateLibrarySortButtons() {
+  document.querySelectorAll("[data-sort]").forEach((button) => {
+    const isActive = button.dataset.sort === state.sort;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
+function compareLibraryGames(a, b) {
+  if (state.sort === "recent") {
+    const recentDifference = getGameLatestTrophyAt(b) - getGameLatestTrophyAt(a);
+    if (recentDifference) return recentDifference;
+  }
+
+  if (state.sort === "progress") {
+    const progressDifference = Number(b.progress || 0) - Number(a.progress || 0);
+    if (progressDifference) return progressDifference;
+  }
+
+  return Number(b.createdAt || b.updatedAt || 0) - Number(a.createdAt || a.updatedAt || 0);
+}
+
+function getGameLatestTrophyAt(game) {
+  const trophies = getDisplayTrophies(game);
+  return trophies.reduce((latest, trophy) => {
+    if (!trophy?.earned || !trophy.earnedAt) return latest;
+    return Math.max(latest, parsePsnProfilesDate(trophy.earnedAt));
+  }, 0);
+}
+
+function parsePsnProfilesDate(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s+(\d{4})/i);
+  if (!match) return 0;
+  const timeMatch = text.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
+
+  const months = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+    jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+  };
+  const month = months[match[2].toLowerCase().slice(0, 3)];
+  if (month === undefined) return 0;
+
+  let hour = Number(timeMatch?.[1] || 0);
+  const meridiem = String(timeMatch?.[4] || "").toUpperCase();
+  if (meridiem === "PM" && hour < 12) hour += 12;
+  if (meridiem === "AM" && hour === 12) hour = 0;
+
+  return new Date(
+    Number(match[3]),
+    month,
+    Number(match[1]),
+    hour,
+    Number(timeMatch?.[2] || 0),
+    Number(timeMatch?.[3] || 0),
+  ).getTime();
+}
+
+function formatRecentActivity(timestamp) {
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(timestamp));
 }
 
 function normalizePlatform(platform) {

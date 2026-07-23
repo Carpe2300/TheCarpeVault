@@ -1,9 +1,9 @@
-const CACHE_NAME = "carpe-vault-shell-v10";
+const CACHE_NAME = "carpe-vault-shell-v11";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=5",
-  "./app.js?v=10",
+  "./styles.css?v=6",
+  "./app.js?v=11",
   "./psnprofiles-import.js",
   "./psnprofiles-trophies.js",
   "./manifest.json",
