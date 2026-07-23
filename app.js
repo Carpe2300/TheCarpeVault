@@ -1189,10 +1189,16 @@ function dedupeLibraryGames() {
 }
 
 function getLibraryDedupeKeys(game) {
+  // Cada identificador de PSNProfiles representa una lista de trofeos real.
+  // Dos ediciones pueden compartir título y ficha de RAWG, pero no deben
+  // fusionarse si PSNProfiles las considera juegos distintos.
+  if (game?.psnProfilesId) {
+    return [`psn:${game.psnProfilesId}`];
+  }
+
   const keys = [];
   const titleKey = normalizeTitle(game?.title);
   const platformKey = normalizePlatform(game?.platform);
-  if (game?.psnProfilesId) keys.push(`psn:${game.psnProfilesId}`);
   if (titleKey) keys.push(`title:${titleKey}|${platformKey}`);
   if (game?.rawgId) keys.push(`rawg:${game.rawgId}`);
   return [...new Set(keys)];
