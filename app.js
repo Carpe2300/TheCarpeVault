@@ -22,6 +22,13 @@ const RAWG_PLATFORM_IDS = {
 // Juegos cuyo nombre es ambiguo en RAWG. Solo estas fichas se fuerzan; las
 // portadas que ya están bien no se vuelven a tocar.
 const RAWG_COVER_OVERRIDES = {
+  "14122-alan-wake": { search: "Alan Wake Remastered", slug: "alan-wake-remastered", revision: 1 },
+  "24347-alan-wake-ii": {
+    search: "Alan Wake 2",
+    slug: "alan-wake-2",
+    fallbackImage: "https://gamesdb-images.launchbox.gg/r2_7f8adb43-d2df-48ea-8969-2233c0fdd527.jpg",
+    revision: 2,
+  },
   "241-god-of-war": { search: "God of War I", slug: "god-of-war", revision: 1 },
   "7523-god-of-war": { search: "God of War 2018", slug: "god-of-war-2", revision: 1 },
   "40071-resident-evil-requiem": { search: "Resident Evil 9 Requiem", slug: "resident-evil-9-requiem", revision: 1 },
@@ -1442,6 +1449,9 @@ function needsBetterCover(game) {
       (game.coverSource === "rawg" && game.rawgSlug !== override.slug)
     );
   }
+  // Una portada ya comprobada en esta versión no se consulta de nuevo si RAWG
+  // no encontró una alternativa segura. Evita bucles y no toca portadas válidas.
+  if (Number(game.coverMatchVersion || 0) >= RAWG_COVER_MATCH_VERSION) return false;
   return Boolean(!current || isPsnProfilesCover(current));
 }
 
@@ -1488,8 +1498,7 @@ async function improveLibraryCoversFromRawg(options = {}) {
           url.searchParams.set("search_precise", "false");
 
           let response = await fetch(url);
-          if (!response.ok) continue;
-          let data = await response.json();
+          let data = response.ok ? await response.json() : { results: [] };
           let result = chooseBestRawgCoverResult(game, data.results || []);
 
           // Algunos juegos cross-buy aparecen en PSN como PS5 aunque RAWG solo los
@@ -1497,9 +1506,10 @@ async function improveLibraryCoversFromRawg(options = {}) {
           if (!result?.background_image) {
             url.searchParams.delete("platforms");
             response = await fetch(url);
-            if (!response.ok) continue;
-            data = await response.json();
-            result = chooseBestRawgCoverResult(game, data.results || []);
+            if (response.ok) {
+              data = await response.json();
+              result = chooseBestRawgCoverResult(game, data.results || []);
+            }
           }
 
           // Las excepciones verificadas consultan también la ficha canónica. Así
@@ -1515,6 +1525,16 @@ async function improveLibraryCoversFromRawg(options = {}) {
             }
           }
 
+          // Respaldo verificado para casos donde RAWG no responde o no devuelve
+          // imagen. Solo se usa en excepciones concretas, nunca en el resto.
+          if (!result?.background_image && override?.fallbackImage) {
+            result = {
+              background_image: override.fallbackImage,
+              slug: override.slug,
+              coverSource: "verified",
+            };
+          }
+
           if (!result?.background_image) {
             game.coverMatchVersion = RAWG_COVER_MATCH_VERSION;
             if (override) game.coverOverrideRevision = override.revision;
@@ -1523,7 +1543,7 @@ async function improveLibraryCoversFromRawg(options = {}) {
 
           game.imageUrl = result.background_image;
           game.imageData = "";
-          game.coverSource = "rawg";
+          game.coverSource = result.coverSource || "rawg";
           game.coverMatchVersion = RAWG_COVER_MATCH_VERSION;
           game.rawgId = result.id;
           game.rawgSlug = result.slug;
@@ -1545,8 +1565,8 @@ async function improveLibraryCoversFromRawg(options = {}) {
     saveGames();
     render();
     const remaining = state.games.filter(needsBetterCover).length;
-    button.textContent = improved ? `Mejoradas ${improved}` : "Sin cambios";
-    if (remaining && silent) {
+    button.textContent = `${checked} revisadas · ${improved} mejoradas`;
+    if (remaining && silent && targets.length >= limit) {
       window.setTimeout(() => improveLibraryCoversFromRawg({ silent: true, limit: 100 }), 1200);
     }
   } catch (error) {
