@@ -18,6 +18,7 @@ const root = __dirname;
 const port = Number(process.env.PORT || 8788);
 const host = "127.0.0.1";
 const authFile = path.join(root, ".carpe-vault-auth.json");
+const trophyCacheFile = path.join(root, ".carpe-vault-trophies.json");
 const powershell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 let activeAuth = null;
 
@@ -139,6 +140,19 @@ function saveStoredAuth(refreshToken, onlineId = "") {
 function clearStoredAuth() {
   activeAuth = null;
   if (fs.existsSync(authFile)) fs.rmSync(authFile);
+}
+
+function loadPlayStationTrophyCache() {
+  try {
+    const cache = JSON.parse(fs.readFileSync(trophyCacheFile, "utf8"));
+    return cache && typeof cache === "object" ? cache : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePlayStationTrophyCache(cache) {
+  fs.writeFileSync(trophyCacheFile, JSON.stringify(cache), { encoding: "utf8", mode: 0o600 });
 }
 
 async function getPlayStationAuthorization() {
@@ -352,11 +366,17 @@ async function syncPlayStationTrophySets(requestedTitles) {
   const results = await Promise.allSettled(
     titles.map((title) => syncPlayStationTrophySet(authorization, title))
   );
+  const details = results
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+  if (details.length) {
+    const cache = loadPlayStationTrophyCache();
+    for (const detail of details) cache[detail.npCommunicationId] = detail;
+    savePlayStationTrophyCache(cache);
+  }
   return {
     connected: true,
-    details: results
-      .filter((result) => result.status === "fulfilled")
-      .map((result) => result.value),
+    details,
     errors: results
       .map((result, index) => ({ result, title: titles[index] }))
       .filter(({ result }) => result.status === "rejected")
@@ -494,6 +514,12 @@ http
       } catch (error) {
         sendJson(res, 502, { error: error.message || "No se pudieron sincronizar los trofeos." });
       }
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/playstation/trophies/cache" && req.method === "GET") {
+      const details = Object.values(loadPlayStationTrophyCache());
+      sendJson(res, 200, { details, total: details.length });
       return;
     }
 

@@ -240,6 +240,7 @@ function init() {
   updateLastSyncStatus();
   setupPwa();
   importBundledPsnProfilesData();
+  void loadPlayStationTrophyCache();
   restorePsnProfilesCovers();
   setupAutomaticPsnProfilesSync();
 
@@ -843,6 +844,11 @@ function findBundledTrophiesForGame(game, trophyMap = getBundledTrophyMap()) {
 }
 
 function getDisplayTrophies(game) {
+  const directTrophies = game?.psnDirectTrophiesSyncedAt && Array.isArray(game.trophies)
+    ? game.trophies
+    : [];
+  if (directTrophies.length) return directTrophies;
+
   const bundled = findBundledTrophiesForGame(game);
   const trophies = bundled.length ? bundled : Array.isArray(game.trophies) ? game.trophies : [];
   // Los rangos revisados manualmente prevalecen sobre una lectura antigua de caché.
@@ -1070,18 +1076,7 @@ async function syncPlayStationTrophyDetails(targets) {
       if (!response.ok) throw new Error(result.error || "PlayStation no devolvió el detalle.");
 
       for (const detail of result.details || []) {
-        const game = state.games.find((item) => item.npCommunicationId === detail.npCommunicationId);
-        if (!game || !Array.isArray(detail.trophies) || !detail.trophies.length) continue;
-        game.trophies = detail.trophies.map((trophy) => ({ ...trophy }));
-        game.trophiesEarned = Number(detail.trophiesEarned || 0);
-        game.trophiesTotal = Number(detail.trophiesTotal || detail.trophies.length);
-        game.hasTrophyGroups = Boolean(detail.hasTrophyGroups);
-        game.psnTrophySetVersion = detail.trophySetVersion || "";
-        game.psnLastUpdatedAt = detail.lastUpdatedDateTime || game.psnLastUpdatedAt || "";
-        game.psnDirectTrophiesSyncedAt = new Date().toISOString();
-        game.updatedAt = Date.now();
-        delete trophyPackState.cache[getTrophyPackCacheKey(game)];
-        updated += 1;
+        if (applyPlayStationTrophyDetail(detail)) updated += 1;
       }
       failed += Array.isArray(result.errors) ? result.errors.length : 0;
       saveTrophyPackCache();
@@ -1092,6 +1087,40 @@ async function syncPlayStationTrophyDetails(targets) {
   }
 
   return { updated, failed };
+}
+
+function applyPlayStationTrophyDetail(detail) {
+  const game = state.games.find((item) => item.npCommunicationId === detail?.npCommunicationId);
+  if (!game || !Array.isArray(detail?.trophies) || !detail.trophies.length) return false;
+  game.trophies = detail.trophies.map((trophy) => ({ ...trophy }));
+  game.trophiesEarned = Number(detail.trophiesEarned || 0);
+  game.trophiesTotal = Number(detail.trophiesTotal || detail.trophies.length);
+  game.hasTrophyGroups = Boolean(detail.hasTrophyGroups);
+  game.psnTrophySetVersion = detail.trophySetVersion || "";
+  game.psnLastUpdatedAt = detail.lastUpdatedDateTime || game.psnLastUpdatedAt || "";
+  game.psnDirectTrophiesSyncedAt = new Date().toISOString();
+  game.updatedAt = Date.now();
+  delete trophyPackState.cache[getTrophyPackCacheKey(game)];
+  return true;
+}
+
+async function loadPlayStationTrophyCache() {
+  try {
+    const response = await fetch("./api/playstation/trophies/cache", { cache: "no-store" });
+    if (!response.ok) return false;
+    const result = await response.json();
+    let applied = 0;
+    for (const detail of result.details || []) {
+      if (applyPlayStationTrophyDetail(detail)) applied += 1;
+    }
+    if (applied) {
+      saveTrophyPackCache();
+      render();
+    }
+    return Boolean(applied);
+  } catch {
+    return false;
+  }
 }
 
 function mergePlayStationGames(importedGames) {
@@ -2369,7 +2398,9 @@ function renderGameProgressHero(game) {
   const trophies = getDisplayTrophies(game);
   const earned = Number(game.trophiesEarned || trophies.filter((trophy) => trophy.earned).length || 0);
   const total = Number(game.trophiesTotal || trophies.length || 0);
-  const progress = total ? Math.round((earned / total) * 100) : Number(game.progress || 0);
+  const progress = game.psnDirectTrophiesSyncedAt
+    ? Number(game.progress || 0)
+    : total ? Math.round((earned / total) * 100) : Number(game.progress || 0);
   const psnp = game.psnProfilesUrl || game.trophy || "";
   elements.gameProgressHero.innerHTML = `
     <div class="progress-cover">
