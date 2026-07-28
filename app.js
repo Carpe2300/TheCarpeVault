@@ -823,29 +823,9 @@ async function importPsnProfilesGames({ silent = false } = {}) {
   elements.syncPsnProfileButton.disabled = true;
   elements.psnSummaryText.textContent = silent
     ? "Sincronizando automáticamente con PSNProfiles..."
-    : "Cargando la última sincronización automática...";
+    : "Leyendo tu perfil actualizado de PSNProfiles...";
 
   try {
-    if (!silent) {
-      const snapshot = await reloadBundledPsnProfilesSnapshot();
-      if (snapshot.available) {
-        const syncedAt = new Date();
-        localStorage.setItem(LAST_SYNC_STORAGE, syncedAt.toISOString());
-        localStorage.setItem(LAST_SYNC_SOURCE_STORAGE, "snapshot");
-        if (snapshot.updatedAt) {
-          localStorage.setItem(LAST_SYNC_SNAPSHOT_STORAGE, snapshot.updatedAt);
-        }
-        updateLastSyncStatus();
-        render();
-        const snapshotDate = snapshot.updatedAt
-          ? new Date(snapshot.updatedAt).toLocaleString("es-ES")
-          : "más reciente";
-        elements.psnSummaryText.textContent = `Datos actualizados con la copia automática ${snapshotDate}. ${snapshot.created} juegos nuevos y ${snapshot.updated} revisados.`;
-        return true;
-      }
-      elements.psnSummaryText.textContent = "No encontré una copia automática; intentando la lectura directa de PSNProfiles...";
-    }
-
     const profileText = await fetchPsnProfilesProfile(user);
     const importedGames = parsePsnProfilesGames(profileText, user);
 
@@ -875,10 +855,9 @@ async function importPsnProfilesGames({ silent = false } = {}) {
   } catch (error) {
     const snapshot = await reloadBundledPsnProfilesSnapshot();
     if (snapshot.available) {
-      const syncedAt = new Date();
-      localStorage.setItem(LAST_SYNC_STORAGE, syncedAt.toISOString());
       localStorage.setItem(LAST_SYNC_SOURCE_STORAGE, "snapshot");
       if (snapshot.updatedAt) {
+        localStorage.setItem(LAST_SYNC_STORAGE, snapshot.updatedAt);
         localStorage.setItem(LAST_SYNC_SNAPSHOT_STORAGE, snapshot.updatedAt);
       }
       updateLastSyncStatus();
@@ -886,8 +865,8 @@ async function importPsnProfilesGames({ silent = false } = {}) {
       const snapshotDate = snapshot.updatedAt
         ? new Date(snapshot.updatedAt).toLocaleString("es-ES")
         : "disponible";
-      elements.psnSummaryText.textContent = `PSNProfiles bloqueó la lectura directa, pero la biblioteca se ha actualizado con la copia automática del ${snapshotDate}. ${snapshot.created} juegos nuevos y ${snapshot.updated} revisados.`;
-      return true;
+      elements.psnSummaryText.textContent = `PSNProfiles ha bloqueado la sincronización en directo. Se conserva la copia local del ${snapshotDate}; no se han importado todavía tus cambios nuevos.`;
+      return false;
     }
 
     elements.psnSummaryText.textContent = silent
