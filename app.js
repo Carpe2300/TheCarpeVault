@@ -989,7 +989,9 @@ async function importPlayStationGames({ silent = false } = {}) {
       throw new Error("PlayStation no devolvió ningún juego con trofeos.");
     }
 
+    const detailTargets = getPlayStationTrophyDetailTargets(result.titles);
     const mergeResult = mergePlayStationGames(result.titles);
+    const detailResult = await syncPlayStationTrophyDetails(detailTargets);
     dedupeLibraryGames();
     saveGames();
     if (!silent) {
@@ -1004,7 +1006,10 @@ async function importPlayStationGames({ silent = false } = {}) {
     queueAutoCoverUpgrade();
     elements.psnSummaryText.textContent =
       `PlayStation sincronizado: ${mergeResult.created} nuevos y ${mergeResult.updated} actualizados ` +
-      `de ${result.total || result.titles.length} juegos. Última lectura: ${syncedAt.toLocaleString("es-ES")}.`;
+      `de ${result.total || result.titles.length} juegos. ` +
+      `${detailResult.updated} listas completas de trofeos actualizadas` +
+      `${detailResult.failed ? ` y ${detailResult.failed} pendientes por reintentar` : ""}. ` +
+      `Última lectura: ${syncedAt.toLocaleString("es-ES")}.`;
     return true;
   } catch (error) {
     elements.psnSummaryText.textContent =
@@ -1012,9 +1017,81 @@ async function importPlayStationGames({ silent = false } = {}) {
     return false;
   } finally {
     psnProfilesSyncInFlight = false;
-    elements.syncPsnProfileButton.textContent = originalText || "Sincronizar ahora";
+    elements.syncPsnProfileButton.textContent = originalText || "Sincronizar juegos y trofeos";
     elements.syncPsnProfileButton.disabled = false;
   }
+}
+
+function getPlayStationTrophyDetailTargets(importedGames) {
+  return importedGames
+    .filter((imported) => imported?.npCommunicationId && Number(imported?.trophiesTotal || 0) > 0)
+    .filter((imported) => {
+      const existing = state.games.find((game) => {
+        if (game.npCommunicationId === imported.npCommunicationId) return true;
+        return normalizeTitle(game.title) === normalizeTitle(imported.title) &&
+          normalizePlatform(game.platform) === normalizePlatform(imported.platform);
+      });
+      if (!existing) return true;
+      const localTrophies = Array.isArray(existing.trophies) ? existing.trophies : [];
+      const summaryChanged = String(existing.psnLastUpdatedAt || "") !== String(imported.lastUpdatedDateTime || "");
+      const incompleteList = localTrophies.length !== Number(imported.trophiesTotal || 0);
+      return !existing.psnDirectTrophiesSyncedAt || summaryChanged || incompleteList;
+    })
+    .map((imported) => ({
+      title: imported.title,
+      platform: imported.platform,
+      npCommunicationId: imported.npCommunicationId,
+      npServiceName: imported.npServiceName,
+      hasTrophyGroups: Boolean(imported.hasTrophyGroups),
+      lastUpdatedDateTime: imported.lastUpdatedDateTime || "",
+    }));
+}
+
+async function syncPlayStationTrophyDetails(targets) {
+  const batchSize = 6;
+  let updated = 0;
+  let failed = 0;
+
+  for (let offset = 0; offset < targets.length; offset += batchSize) {
+    const batch = targets.slice(offset, offset + batchSize);
+    const completed = Math.min(offset + batch.length, targets.length);
+    elements.syncPsnProfileButton.textContent = `Trofeos ${completed}/${targets.length}`;
+    elements.psnSummaryText.textContent =
+      `Sincronizando listas, tipos, iconos y DLC de PlayStation: ${completed}/${targets.length} juegos...`;
+
+    try {
+      const response = await fetch("./api/playstation/trophies", {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ titles: batch }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "PlayStation no devolvió el detalle.");
+
+      for (const detail of result.details || []) {
+        const game = state.games.find((item) => item.npCommunicationId === detail.npCommunicationId);
+        if (!game || !Array.isArray(detail.trophies) || !detail.trophies.length) continue;
+        game.trophies = detail.trophies.map((trophy) => ({ ...trophy }));
+        game.trophiesEarned = Number(detail.trophiesEarned || 0);
+        game.trophiesTotal = Number(detail.trophiesTotal || detail.trophies.length);
+        game.hasTrophyGroups = Boolean(detail.hasTrophyGroups);
+        game.psnTrophySetVersion = detail.trophySetVersion || "";
+        game.psnLastUpdatedAt = detail.lastUpdatedDateTime || game.psnLastUpdatedAt || "";
+        game.psnDirectTrophiesSyncedAt = new Date().toISOString();
+        game.updatedAt = Date.now();
+        delete trophyPackState.cache[getTrophyPackCacheKey(game)];
+        updated += 1;
+      }
+      failed += Array.isArray(result.errors) ? result.errors.length : 0;
+      saveTrophyPackCache();
+      saveGames();
+    } catch {
+      failed += batch.length;
+    }
+  }
+
+  return { updated, failed };
 }
 
 function mergePlayStationGames(importedGames) {

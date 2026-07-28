@@ -8,7 +8,10 @@ const {
   exchangeAccessCodeForAuthTokens,
   exchangeRefreshTokenForAuthTokens,
   getProfileFromAccountId,
+  getTitleTrophies,
+  getTitleTrophyGroups,
   getUserTitles,
+  getUserTrophiesEarnedForTitle,
 } = require("psn-api");
 
 const root = __dirname;
@@ -233,6 +236,139 @@ async function syncPlayStationTitles() {
   };
 }
 
+function normalizePlayStationTrophyType(value) {
+  const type = String(value || "").toLowerCase();
+  if (type === "platinum") return "Platino";
+  if (type === "gold") return "Oro";
+  if (type === "silver") return "Plata";
+  if (type === "bronze") return "Bronce";
+  return "Trofeo";
+}
+
+function normalizePlayStationTrophyRarity(rate) {
+  const value = Number.parseFloat(String(rate || "0"));
+  const label = value <= 5 ? "Ultra Rare"
+    : value <= 10 ? "Very Rare"
+      : value <= 50 ? "Rare"
+        : "Common";
+  return `${Number.isFinite(value) ? value : 0}% ${label}`;
+}
+
+async function getAllPlayStationTrophies(fetchPage) {
+  const trophies = [];
+  let offset = 0;
+  let firstResponse = null;
+
+  while (true) {
+    const response = await fetchPage(offset);
+    if (!firstResponse) firstResponse = response;
+    const page = Array.isArray(response?.trophies) ? response.trophies : [];
+    trophies.push(...page);
+    const nextOffset = Number(response?.nextOffset);
+    if (!page.length || !Number.isFinite(nextOffset) || nextOffset <= offset) break;
+    offset = nextOffset;
+  }
+
+  return { ...(firstResponse || {}), trophies };
+}
+
+async function syncPlayStationTrophySet(authorization, title) {
+  const npCommunicationId = String(title?.npCommunicationId || "").trim();
+  if (!npCommunicationId) throw new Error("El juego no tiene identificador de trofeos.");
+  const npServiceName = title?.npServiceName ||
+    (normalizePlayStationPlatform(title?.platform) === "PS5" ? "trophy2" : "trophy");
+  const options = {
+    npServiceName,
+    headerOverrides: { "Accept-Language": "es-ES" },
+  };
+
+  const [definedResponse, earnedResponse, groupsResponse] = await Promise.all([
+    getAllPlayStationTrophies((offset) => getTitleTrophies(
+      authorization,
+      npCommunicationId,
+      "all",
+      { ...options, limit: 100, offset }
+    )),
+    getAllPlayStationTrophies((offset) => getUserTrophiesEarnedForTitle(
+      authorization,
+      "me",
+      npCommunicationId,
+      "all",
+      { ...options, limit: 100, offset }
+    )),
+    title?.hasTrophyGroups
+      ? getTitleTrophyGroups(authorization, npCommunicationId, {
+        npServiceName,
+        headerOverrides: options.headerOverrides,
+      }).catch(() => ({ trophyGroups: [] }))
+      : Promise.resolve({ trophyGroups: [] }),
+  ]);
+
+  const earnedById = new Map(
+    (earnedResponse?.trophies || []).map((trophy) => [Number(trophy.trophyId), trophy])
+  );
+  const groupById = new Map(
+    (groupsResponse?.trophyGroups || []).map((group) => [String(group.trophyGroupId), group])
+  );
+  const trophies = (definedResponse?.trophies || []).map((trophy) => {
+    const earned = earnedById.get(Number(trophy.trophyId)) || {};
+    const groupId = String(trophy.trophyGroupId || "default");
+    const group = groupById.get(groupId);
+    const groupName = groupId === "default"
+      ? "Juego base"
+      : group?.trophyGroupName || group?.trophyGroupDetail || `DLC ${groupId}`;
+    return {
+      id: `psn-${npCommunicationId}-${trophy.trophyId}`,
+      trophyId: Number(trophy.trophyId),
+      name: trophy.trophyName || `Trofeo ${Number(trophy.trophyId) + 1}`,
+      description: trophy.trophyDetail || "",
+      type: normalizePlayStationTrophyType(trophy.trophyType || earned.trophyType),
+      rarity: normalizePlayStationTrophyRarity(earned.trophyEarnedRate),
+      earned: Boolean(earned.earned),
+      earnedAt: earned.earnedDateTime || "",
+      imageUrl: trophy.trophyIconUrl || "",
+      group: groupName,
+      trophyGroupId: groupId,
+      hidden: Boolean(trophy.trophyHidden),
+      source: "PlayStation",
+    };
+  });
+
+  return {
+    npCommunicationId,
+    npServiceName,
+    trophySetVersion: definedResponse?.trophySetVersion || earnedResponse?.trophySetVersion || "",
+    lastUpdatedDateTime: earnedResponse?.lastUpdatedDateTime || title?.lastUpdatedDateTime || "",
+    hasTrophyGroups: Boolean(definedResponse?.hasTrophyGroups || earnedResponse?.hasTrophyGroups),
+    trophies,
+    trophiesEarned: trophies.filter((trophy) => trophy.earned).length,
+    trophiesTotal: trophies.length,
+  };
+}
+
+async function syncPlayStationTrophySets(requestedTitles) {
+  const authorization = await getPlayStationAuthorization();
+  const titles = Array.isArray(requestedTitles) ? requestedTitles.slice(0, 6) : [];
+  const results = await Promise.allSettled(
+    titles.map((title) => syncPlayStationTrophySet(authorization, title))
+  );
+  return {
+    connected: true,
+    details: results
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => result.value),
+    errors: results
+      .map((result, index) => ({ result, title: titles[index] }))
+      .filter(({ result }) => result.status === "rejected")
+      .map(({ result, title }) => ({
+        npCommunicationId: title?.npCommunicationId || "",
+        title: title?.title || "",
+        error: result.reason?.message || "No se pudo leer el juego.",
+      })),
+    syncedAt: new Date().toISOString(),
+  };
+}
+
 function getSnapshotMetadata() {
   const snapshots = ["psnprofiles-import.js", "psnprofiles-trophies.js"].map((name) => {
     const filePath = path.join(root, name);
@@ -343,6 +479,20 @@ http
         sendJson(res, 200, await syncPlayStationTitles());
       } catch (error) {
         sendJson(res, 502, { error: error.message || "No se pudo sincronizar PlayStation." });
+      }
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/playstation/trophies" && req.method === "POST") {
+      if (!isTrustedLocalRequest(req)) {
+        sendJson(res, 403, { error: "Origen no permitido." });
+        return;
+      }
+      try {
+        const body = await readJsonBody(req, 128 * 1024);
+        sendJson(res, 200, await syncPlayStationTrophySets(body.titles));
+      } catch (error) {
+        sendJson(res, 502, { error: error.message || "No se pudieron sincronizar los trofeos." });
       }
       return;
     }
