@@ -793,6 +793,8 @@ button.tiny {
   border: 1px solid rgba(255, 255, 255, 0.08);
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
   cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: 290px 410px;
 }
 
 .library-game-card:hover {

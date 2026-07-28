@@ -149,6 +149,7 @@ const trophyPackState = {
 
 let deferredInstallPrompt = null;
 let psnProfilesSyncInFlight = false;
+let bundledTrophiesLoadPromise = null;
 
 const elements = {
   statPlatinums: document.querySelector("#statPlatinums"),
@@ -244,8 +245,10 @@ function init() {
   });
 
   let catalogSearchTimer = 0;
+  let librarySearchFrame = 0;
   elements.vaultSearch.addEventListener("input", () => {
-    renderList();
+    window.cancelAnimationFrame(librarySearchFrame);
+    librarySearchFrame = window.requestAnimationFrame(renderList);
     window.clearTimeout(catalogSearchTimer);
     const query = elements.vaultSearch.value.trim();
     if (query.length < 2) return;
@@ -309,10 +312,13 @@ function init() {
   });
 
   document.querySelectorAll("[data-sort]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       state.sort = button.dataset.sort || "added";
       localStorage.setItem(LIBRARY_SORT_STORAGE, state.sort);
       updateLibrarySortButtons();
+      if (state.sort === "recent") {
+        await ensureBundledTrophiesLoaded();
+      }
       renderList();
     });
   });
@@ -456,6 +462,9 @@ function init() {
   elements.addTrophyButton?.addEventListener("click", addBlankTrophy);
 
   render();
+  if (state.sort === "recent") {
+    ensureBundledTrophiesLoaded().then(renderList).catch(() => {});
+  }
   queueAutoCoverUpgrade();
 }
 
@@ -718,6 +727,22 @@ function getBundledTrophyMap() {
   return window.CARPE_PSNPROFILES_TROPHIES && typeof window.CARPE_PSNPROFILES_TROPHIES === "object"
     ? window.CARPE_PSNPROFILES_TROPHIES
     : {};
+}
+
+function ensureBundledTrophiesLoaded() {
+  if (Object.keys(getBundledTrophyMap()).length) {
+    return Promise.resolve(getBundledTrophyMap());
+  }
+  if (bundledTrophiesLoadPromise) return bundledTrophiesLoadPromise;
+
+  bundledTrophiesLoadPromise = loadFreshSnapshotScript(
+    `./psnprofiles-trophies.js?v=${Date.now()}`,
+    "CARPE_PSNPROFILES_TROPHIES",
+  ).then(() => getBundledTrophyMap()).catch((error) => {
+    bundledTrophiesLoadPromise = null;
+    throw error;
+  });
+  return bundledTrophiesLoadPromise;
 }
 
 function findBundledTrophiesForGame(game, trophyMap = getBundledTrophyMap()) {
@@ -2019,22 +2044,38 @@ function getSelectedGame() {
 async function render() {
   const game = getSelectedGame();
   fillForm(game);
-  renderList();
+  if (state.view === "library") renderList();
   renderStats();
   renderView();
-  queueTrophyPackSync(game);
-  queueVisibleTrophyPackSync();
+  if (state.view === "detail" && Object.keys(getBundledTrophyMap()).length) {
+    queueTrophyPackSync(game);
+  }
 }
 
 function renderSoft() {
   const game = getSelectedGame();
-  renderList();
   renderStats();
   renderGameProgressHero(game);
   renderTrophies(game);
   renderView();
-  queueTrophyPackSync(game);
-  queueVisibleTrophyPackSync();
+  if (state.view === "detail" && Object.keys(getBundledTrophyMap()).length) {
+    queueTrophyPackSync(game);
+  }
+}
+
+async function openGameDetail(game) {
+  state.selectedId = game.id;
+  state.view = "detail";
+  setActiveViewButton("detail");
+  elements.libraryGrid.replaceChildren();
+  await render();
+
+  try {
+    await ensureBundledTrophiesLoaded();
+    if (state.view === "detail" && state.selectedId === game.id) await render();
+  } catch {
+    // La ficha sigue disponible aunque el detalle de trofeos no pueda cargarse.
+  }
 }
 
 function fillForm(game) {
@@ -2686,23 +2727,22 @@ function renderList() {
     return;
   }
 
+  const gridFragment = document.createDocumentFragment();
   for (const game of games) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `game-item ${game.id === state.selectedId ? "active" : ""}`;
-    button.innerHTML = `
-      <strong>${escapeHtml(game.title || "Sin título")}</strong>
-      <span>${escapeHtml(game.status)} · ${escapeHtml(game.platform || "Sin plataforma")} · ${Number(game.progress || 0)}%</span>
-    `;
-    button.addEventListener("click", async () => {
-      state.selectedId = game.id;
-      state.view = "detail";
-      setActiveViewButton("detail");
-      await render();
-    });
-    if (elements.gameList) elements.gameList.appendChild(button);
-    elements.libraryGrid.appendChild(createLibraryCard(game));
+    if (elements.gameList) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `game-item ${game.id === state.selectedId ? "active" : ""}`;
+      button.innerHTML = `
+        <strong>${escapeHtml(game.title || "Sin título")}</strong>
+        <span>${escapeHtml(game.status)} · ${escapeHtml(game.platform || "Sin plataforma")} · ${Number(game.progress || 0)}%</span>
+      `;
+      button.addEventListener("click", () => openGameDetail(game));
+      elements.gameList.appendChild(button);
+    }
+    gridFragment.appendChild(createLibraryCard(game));
   }
+  elements.libraryGrid.appendChild(gridFragment);
 }
 
 function createLibraryCard(game) {
@@ -2728,19 +2768,11 @@ function createLibraryCard(game) {
   `;
   card.tabIndex = 0;
   card.role = "button";
-  card.addEventListener("click", async () => {
-    state.selectedId = game.id;
-    state.view = "detail";
-    setActiveViewButton("detail");
-    await render();
-  });
-  card.addEventListener("keydown", async (event) => {
+  card.addEventListener("click", () => openGameDetail(game));
+  card.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    state.selectedId = game.id;
-    state.view = "detail";
-    setActiveViewButton("detail");
-    await render();
+    openGameDetail(game);
   });
   return card;
 }
