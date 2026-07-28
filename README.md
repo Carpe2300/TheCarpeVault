@@ -17,11 +17,14 @@ Ejecuta `abrir-carpe-vault.bat`. La aplicación se abrirá en `http://127.0.0.1:
 - Caché de la interfaz y los datos importados para poder abrirla sin conexión.
 - Copia de seguridad JSON y restauración desde Configuración.
 - Registro de la última sincronización correcta con PSNProfiles.
-- Sincronización automática al abrir la app, recuperar Internet o volver tras seis horas; solo refresca el detalle de los juegos cuyo progreso haya cambiado.
+- Conexión directa opcional con PlayStation para sincronizar progreso y platinos sin depender del bloqueo web de PSNProfiles.
+- Sincronización automática al abrir la app, recuperar Internet o volver tras seis horas.
 
 ## Seguridad y datos
 
 La biblioteca se guarda en el navegador. Las copias de seguridad contienen juegos, progreso, usuario de PSNProfiles y organización de los DLC. La clave de RAWG no se exporta y permanece oculta en la interfaz.
+
+El NPSSO de PlayStation solo se usa una vez en el servidor local. Se intercambia por una credencial renovable cifrada con la protección de la cuenta de Windows y se descarta inmediatamente. El archivo local `.carpe-vault-auth.json` está excluido de Git y de las copias de seguridad.
 
 ## Próxima fase
 

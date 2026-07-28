@@ -151,6 +151,7 @@ const trophyPackState = {
 let deferredInstallPrompt = null;
 let psnProfilesSyncInFlight = false;
 let bundledTrophiesLoadPromise = null;
+let playStationConnected = false;
 
 const elements = {
   statPlatinums: document.querySelector("#statPlatinums"),
@@ -177,6 +178,10 @@ const elements = {
   psnProfilesInput: document.querySelector("#psnProfilesInput"),
   psnProfilesStatus: document.querySelector("#psnProfilesStatus"),
   clearPsnProfilesButton: document.querySelector("#clearPsnProfilesButton"),
+  playStationNpssoInput: document.querySelector("#playStationNpssoInput"),
+  connectPlayStationButton: document.querySelector("#connectPlayStationButton"),
+  disconnectPlayStationButton: document.querySelector("#disconnectPlayStationButton"),
+  playStationStatus: document.querySelector("#playStationStatus"),
   psnProfileCard: document.querySelector("#psnProfileCard"),
   psnProfileCardImage: document.querySelector("#psnProfileCardImage"),
   psnSummaryTitle: document.querySelector("#psnSummaryTitle"),
@@ -231,6 +236,7 @@ function init() {
   elements.psnProfilesInput.value = localStorage.getItem(PSNPROFILES_USER_STORAGE) || "";
   updateRawgKeyStatus();
   updatePsnProfilesConnection();
+  void updatePlayStationConnectionStatus();
   updateLastSyncStatus();
   setupPwa();
   importBundledPsnProfilesData();
@@ -382,6 +388,9 @@ function init() {
     elements.psnProfilesInput.value = "";
     updatePsnProfilesConnection();
   });
+
+  elements.connectPlayStationButton?.addEventListener("click", connectPlayStation);
+  elements.disconnectPlayStationButton?.addEventListener("click", disconnectPlayStation);
 
   elements.openPsnProfileButton.addEventListener("click", () => {
     const user = getPsnProfilesUser();
@@ -576,7 +585,9 @@ function updateLastSyncStatus() {
   const value = localStorage.getItem(LAST_SYNC_STORAGE);
   const date = value ? new Date(value) : null;
   const source = localStorage.getItem(LAST_SYNC_SOURCE_STORAGE);
-  const sourceLabel = source === "live"
+  const sourceLabel = source === "playstation"
+    ? " · PlayStation directo"
+    : source === "live"
     ? " · lectura directa"
     : source === "snapshot"
       ? " · copia automática"
@@ -602,7 +613,7 @@ function setupAutomaticPsnProfilesSync() {
 }
 
 async function maybeAutoSyncPsnProfiles() {
-  if (!getPsnProfilesUser() || psnProfilesSyncInFlight || !navigator.onLine) return;
+  if ((!getPsnProfilesUser() && !playStationConnected) || psnProfilesSyncInFlight || !navigator.onLine) return;
 
   const lastSync = new Date(localStorage.getItem(LAST_SYNC_STORAGE) || 0).getTime();
   if (Number.isFinite(lastSync) && Date.now() - lastSync < PSN_AUTO_SYNC_INTERVAL_MS) return;
@@ -612,6 +623,77 @@ async function maybeAutoSyncPsnProfiles() {
 
   localStorage.setItem(LAST_SYNC_ATTEMPT_STORAGE, new Date().toISOString());
   await importPsnProfilesGames({ silent: true });
+}
+
+async function updatePlayStationConnectionStatus() {
+  try {
+    const response = await fetch("./api/playstation/status", { cache: "no-store" });
+    if (!response.ok) throw new Error("Servidor local no disponible");
+    const result = await response.json();
+    playStationConnected = Boolean(result.connected);
+    if (elements.playStationStatus) {
+      elements.playStationStatus.textContent = playStationConnected
+        ? `PlayStation conectado${result.onlineId ? `: ${result.onlineId}` : ""}`
+        : "PlayStation sin conectar";
+      elements.playStationStatus.classList.toggle("ok", playStationConnected);
+    }
+    if (elements.disconnectPlayStationButton) {
+      elements.disconnectPlayStationButton.disabled = !playStationConnected;
+    }
+    return playStationConnected;
+  } catch {
+    playStationConnected = false;
+    if (elements.playStationStatus) {
+      elements.playStationStatus.textContent = "Abre The Carpe Vault con el servidor local para conectar PlayStation";
+      elements.playStationStatus.classList.remove("ok");
+    }
+    return false;
+  }
+}
+
+async function connectPlayStation() {
+  const npsso = elements.playStationNpssoInput?.value.trim() || "";
+  if (!npsso) {
+    elements.playStationStatus.textContent = "Abre «Obtener NPSSO», copia el valor y pégalo aquí.";
+    return;
+  }
+  const originalText = elements.connectPlayStationButton.textContent;
+  elements.connectPlayStationButton.disabled = true;
+  elements.connectPlayStationButton.textContent = "Conectando...";
+  elements.playStationStatus.textContent = "Validando la sesión directamente con PlayStation...";
+  try {
+    const response = await fetch("./api/playstation/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ npsso }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "No se pudo conectar PlayStation.");
+    elements.playStationNpssoInput.value = "";
+    playStationConnected = true;
+    elements.playStationStatus.textContent = `PlayStation conectado${result.onlineId ? `: ${result.onlineId}` : ""}`;
+    elements.playStationStatus.classList.add("ok");
+    elements.disconnectPlayStationButton.disabled = false;
+    elements.psnSummaryText.textContent = "PlayStation está conectado directamente. Ya puedes sincronizar tus trofeos sin depender de que PSNProfiles permita leer su web.";
+  } catch (error) {
+    elements.playStationStatus.textContent = error.message;
+    elements.playStationStatus.classList.remove("ok");
+  } finally {
+    elements.connectPlayStationButton.disabled = false;
+    elements.connectPlayStationButton.textContent = originalText;
+  }
+}
+
+async function disconnectPlayStation() {
+  try {
+    await fetch("./api/playstation/disconnect", { method: "POST" });
+  } finally {
+    playStationConnected = false;
+    elements.playStationNpssoInput.value = "";
+    elements.playStationStatus.textContent = "PlayStation sin conectar";
+    elements.playStationStatus.classList.remove("ok");
+    elements.disconnectPlayStationButton.disabled = true;
+  }
 }
 
 function setActiveViewButton(view) {
@@ -808,6 +890,11 @@ function getTrophyPackLookupKeys(trophy) {
 }
 
 async function importPsnProfilesGames({ silent = false } = {}) {
+  const directPlayStation = playStationConnected || await updatePlayStationConnectionStatus();
+  if (directPlayStation) {
+    return importPlayStationGames({ silent });
+  }
+
   const user = getPsnProfilesUser();
   if (!user) {
     if (!silent) elements.settingsDialog.showModal();
@@ -878,6 +965,125 @@ async function importPsnProfilesGames({ silent = false } = {}) {
     elements.syncPsnProfileButton.textContent = originalText || "Sincronizar ahora";
     elements.syncPsnProfileButton.disabled = !getPsnProfilesUser();
   }
+}
+
+async function importPlayStationGames({ silent = false } = {}) {
+  if (psnProfilesSyncInFlight) return false;
+  psnProfilesSyncInFlight = true;
+
+  const originalText = elements.syncPsnProfileButton.textContent;
+  elements.syncPsnProfileButton.textContent = "Sincronizando...";
+  elements.syncPsnProfileButton.disabled = true;
+  elements.psnSummaryText.textContent = silent
+    ? "Sincronizando automáticamente con PlayStation..."
+    : "Leyendo tus trofeos directamente desde PlayStation...";
+
+  try {
+    const response = await fetch("./api/playstation/sync", {
+      method: "POST",
+      cache: "no-store",
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "PlayStation no pudo completar la sincronización.");
+    if (!Array.isArray(result.titles) || !result.titles.length) {
+      throw new Error("PlayStation no devolvió ningún juego con trofeos.");
+    }
+
+    const mergeResult = mergePlayStationGames(result.titles);
+    dedupeLibraryGames();
+    saveGames();
+    if (!silent) {
+      state.view = "library";
+      setActiveViewButton("library");
+    }
+    const syncedAt = new Date(result.syncedAt || Date.now());
+    localStorage.setItem(LAST_SYNC_STORAGE, syncedAt.toISOString());
+    localStorage.setItem(LAST_SYNC_SOURCE_STORAGE, "playstation");
+    updateLastSyncStatus();
+    render();
+    queueAutoCoverUpgrade();
+    elements.psnSummaryText.textContent =
+      `PlayStation sincronizado: ${mergeResult.created} nuevos y ${mergeResult.updated} actualizados ` +
+      `de ${result.total || result.titles.length} juegos. Última lectura: ${syncedAt.toLocaleString("es-ES")}.`;
+    return true;
+  } catch (error) {
+    elements.psnSummaryText.textContent =
+      `No se pudo sincronizar directamente con PlayStation: ${error.message} Tu biblioteca actual no se ha borrado.`;
+    return false;
+  } finally {
+    psnProfilesSyncInFlight = false;
+    elements.syncPsnProfileButton.textContent = originalText || "Sincronizar ahora";
+    elements.syncPsnProfileButton.disabled = false;
+  }
+}
+
+function mergePlayStationGames(importedGames) {
+  let created = 0;
+  let updated = 0;
+
+  for (const imported of importedGames) {
+    const earned = Number(imported.trophiesEarned || 0);
+    const total = Number(imported.trophiesTotal || 0);
+    const existing = state.games.find((game) => {
+      if (imported.npCommunicationId && game.npCommunicationId === imported.npCommunicationId) return true;
+      return normalizeTitle(game.title) === normalizeTitle(imported.title) &&
+        normalizePlatform(game.platform) === normalizePlatform(imported.platform);
+    });
+
+    if (existing) {
+      Object.assign(existing, {
+        title: imported.title || existing.title,
+        platform: imported.platform || existing.platform,
+        status: imported.status,
+        progress: Number(imported.progress || 0),
+        trophiesEarned: earned,
+        trophiesTotal: total,
+        npCommunicationId: imported.npCommunicationId || existing.npCommunicationId,
+        npServiceName: imported.npServiceName || existing.npServiceName,
+        hasTrophyGroups: Boolean(imported.hasTrophyGroups),
+        psnLastUpdatedAt: imported.lastUpdatedDateTime || existing.psnLastUpdatedAt || "",
+        imageUrl: shouldKeepExistingCover(existing)
+          ? existing.imageUrl
+          : imported.imageUrl || existing.imageUrl,
+        coverSource: shouldKeepExistingCover(existing)
+          ? existing.coverSource
+          : imported.imageUrl ? "playstation" : existing.coverSource,
+        updatedAt: Date.now(),
+      });
+      updated += 1;
+      continue;
+    }
+
+    state.games.unshift({
+      id: crypto.randomUUID(),
+      title: imported.title,
+      status: imported.status,
+      platform: imported.platform || "PS5",
+      platinumNumber: "",
+      duration: "",
+      difficulty: "",
+      trophy: "",
+      progress: Number(imported.progress || 0),
+      rarity: imported.status === "Platino" ? "Platino" : "PlayStation",
+      notes: "",
+      imageData: "",
+      imageUrl: imported.imageUrl || "",
+      coverSource: imported.imageUrl ? "playstation" : "",
+      trophies: [],
+      trophiesEarned: earned,
+      trophiesTotal: total,
+      npCommunicationId: imported.npCommunicationId || "",
+      npServiceName: imported.npServiceName || "",
+      hasTrophyGroups: Boolean(imported.hasTrophyGroups),
+      psnLastUpdatedAt: imported.lastUpdatedDateTime || "",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    created += 1;
+  }
+
+  state.selectedId = state.games[0]?.id || state.selectedId;
+  return { created, updated };
 }
 
 async function reloadBundledPsnProfilesSnapshot() {

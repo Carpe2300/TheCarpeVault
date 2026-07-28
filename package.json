@@ -1,0 +1,11 @@
+{
+  "name": "the-carpe-vault",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node local-server.cjs"
+  },
+  "dependencies": {
+    "psn-api": "^2.18.0"
+  }
+}

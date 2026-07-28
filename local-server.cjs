@@ -2,10 +2,21 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
+const {
+  exchangeNpssoForAccessCode,
+  exchangeAccessCodeForAuthTokens,
+  exchangeRefreshTokenForAuthTokens,
+  getProfileFromAccountId,
+  getUserTitles,
+} = require("psn-api");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 8788);
 const host = "127.0.0.1";
+const authFile = path.join(root, ".carpe-vault-auth.json");
+const powershell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+let activeAuth = null;
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -35,6 +46,191 @@ function sendJson(res, status, payload) {
     "Access-Control-Allow-Origin": "*",
   });
   res.end(JSON.stringify(payload));
+}
+
+function isTrustedLocalRequest(req) {
+  const origin = String(req.headers.origin || "");
+  return !origin || origin === `http://${host}:${port}`;
+}
+
+function readJsonBody(req, limit = 16 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > limit) {
+        reject(new Error("La solicitud es demasiado grande."));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        reject(new Error("JSON no valido."));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function protectSecret(value) {
+  if (process.platform !== "win32") {
+    throw new Error("El almacenamiento seguro local solo esta habilitado en Windows.");
+  }
+  const script = [
+    "Add-Type -AssemblyName System.Security",
+    "$bytes=[Text.Encoding]::UTF8.GetBytes($env:CARPE_SECRET)",
+    "$encrypted=[Security.Cryptography.ProtectedData]::Protect($bytes,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)",
+    "[Convert]::ToBase64String($encrypted)",
+  ].join("; ");
+  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], {
+    encoding: "utf8",
+    windowsHide: true,
+    env: { ...process.env, CARPE_SECRET: value },
+  });
+  if (result.status !== 0 || !result.stdout.trim()) {
+    throw new Error("Windows no pudo proteger la credencial local.");
+  }
+  return result.stdout.trim();
+}
+
+function unprotectSecret(value) {
+  const script = [
+    "Add-Type -AssemblyName System.Security",
+    "$encrypted=[Convert]::FromBase64String($env:CARPE_SECRET)",
+    "$bytes=[Security.Cryptography.ProtectedData]::Unprotect($encrypted,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)",
+    "[Text.Encoding]::UTF8.GetString($bytes)",
+  ].join("; ");
+  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], {
+    encoding: "utf8",
+    windowsHide: true,
+    env: { ...process.env, CARPE_SECRET: value },
+  });
+  if (result.status !== 0 || !result.stdout.trim()) {
+    throw new Error("No se pudo abrir la credencial local de PlayStation.");
+  }
+  return result.stdout.trim();
+}
+
+function loadStoredAuth() {
+  if (!fs.existsSync(authFile)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(authFile, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredAuth(refreshToken, onlineId = "") {
+  const payload = {
+    version: 1,
+    refreshToken: protectSecret(refreshToken),
+    onlineId,
+    connectedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(authFile, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600 });
+}
+
+function clearStoredAuth() {
+  activeAuth = null;
+  if (fs.existsSync(authFile)) fs.rmSync(authFile);
+}
+
+async function getPlayStationAuthorization() {
+  if (activeAuth?.accessToken && activeAuth.expiresAt > Date.now() + 60_000) {
+    return activeAuth;
+  }
+  const stored = loadStoredAuth();
+  if (!stored?.refreshToken) throw new Error("PlayStation no esta conectado.");
+  const refreshToken = unprotectSecret(stored.refreshToken);
+  const tokens = await exchangeRefreshTokenForAuthTokens(refreshToken);
+  if (!tokens?.accessToken || !tokens?.refreshToken) {
+    throw new Error("PlayStation no devolvio una sesion valida.");
+  }
+  saveStoredAuth(tokens.refreshToken, stored.onlineId || "");
+  activeAuth = {
+    accessToken: tokens.accessToken,
+    expiresAt: Date.now() + Number(tokens.expiresIn || 3600) * 1000,
+  };
+  return activeAuth;
+}
+
+function trophyCount(counts = {}) {
+  return ["bronze", "silver", "gold", "platinum"]
+    .reduce((sum, key) => sum + Number(counts[key] || 0), 0);
+}
+
+function normalizePlayStationPlatform(value) {
+  const platform = String(value || "").toUpperCase();
+  if (platform.includes("PS5")) return "PS5";
+  if (platform.includes("PS4")) return "PS4";
+  if (platform.includes("PS3")) return "PS3";
+  if (platform.includes("VITA")) return "PS Vita";
+  return platform.split(",")[0] || "PlayStation";
+}
+
+function normalizePlayStationTitle(title) {
+  const earned = trophyCount(title.earnedTrophies);
+  const total = trophyCount(title.definedTrophies);
+  const progress = Number(title.progress || 0);
+  const platinum = Number(title.earnedTrophies?.platinum || 0) > 0;
+  return {
+    title: title.trophyTitleName,
+    platform: normalizePlayStationPlatform(title.trophyTitlePlatform),
+    progress,
+    status: platinum ? "Platino" : earned > 0 ? "En progreso" : "Backlog",
+    imageUrl: title.trophyTitleIconUrl || "",
+    trophiesEarned: earned,
+    trophiesTotal: total,
+    lastUpdatedDateTime: title.lastUpdatedDateTime || "",
+    npCommunicationId: title.npCommunicationId,
+    npServiceName: title.npServiceName,
+    hasTrophyGroups: Boolean(title.hasTrophyGroups),
+    earnedTrophies: title.earnedTrophies || {},
+    definedTrophies: title.definedTrophies || {},
+    source: "PlayStation",
+  };
+}
+
+async function connectPlayStation(npsso) {
+  const token = String(npsso || "").trim();
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(token)) {
+    throw new Error("El NPSSO no tiene un formato valido.");
+  }
+  const code = await exchangeNpssoForAccessCode(token);
+  const tokens = await exchangeAccessCodeForAuthTokens(code);
+  if (!tokens?.accessToken || !tokens?.refreshToken) {
+    throw new Error("PlayStation no devolvio una sesion valida.");
+  }
+  const authorization = { accessToken: tokens.accessToken };
+  const profile = await getProfileFromAccountId(authorization, "me").catch(() => ({}));
+  saveStoredAuth(tokens.refreshToken, profile.onlineId || "");
+  activeAuth = {
+    accessToken: tokens.accessToken,
+    expiresAt: Date.now() + Number(tokens.expiresIn || 3600) * 1000,
+  };
+  return { connected: true, onlineId: profile.onlineId || "" };
+}
+
+async function syncPlayStationTitles() {
+  const authorization = await getPlayStationAuthorization();
+  const response = await getUserTitles(authorization, "me", {
+    limit: 800,
+    offset: 0,
+    headerOverrides: { "Accept-Language": "es-ES" },
+  });
+  const titles = Array.isArray(response?.trophyTitles)
+    ? response.trophyTitles.map(normalizePlayStationTitle)
+    : [];
+  return {
+    connected: true,
+    onlineId: loadStoredAuth()?.onlineId || "",
+    total: Number(response?.totalItemCount || titles.length),
+    titles,
+    syncedAt: new Date().toISOString(),
+  };
 }
 
 function getSnapshotMetadata() {
@@ -102,8 +298,55 @@ function proxyRemote(req, res, target, allowedHosts, contentType) {
 }
 
 http
-  .createServer((req, res) => {
+  .createServer(async (req, res) => {
     const requestUrl = new URL(req.url || "/", `http://${host}:${port}`);
+    if (requestUrl.pathname === "/api/playstation/status") {
+      const stored = loadStoredAuth();
+      sendJson(res, 200, {
+        connected: Boolean(stored?.refreshToken),
+        onlineId: stored?.onlineId || "",
+        connectedAt: stored?.connectedAt || "",
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/playstation/connect" && req.method === "POST") {
+      if (!isTrustedLocalRequest(req)) {
+        sendJson(res, 403, { error: "Origen no permitido." });
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        sendJson(res, 200, await connectPlayStation(body.npsso));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message || "No se pudo conectar PlayStation." });
+      }
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/playstation/disconnect" && req.method === "POST") {
+      if (!isTrustedLocalRequest(req)) {
+        sendJson(res, 403, { error: "Origen no permitido." });
+        return;
+      }
+      clearStoredAuth();
+      sendJson(res, 200, { connected: false });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/playstation/sync" && req.method === "POST") {
+      if (!isTrustedLocalRequest(req)) {
+        sendJson(res, 403, { error: "Origen no permitido." });
+        return;
+      }
+      try {
+        sendJson(res, 200, await syncPlayStationTitles());
+      } catch (error) {
+        sendJson(res, 502, { error: error.message || "No se pudo sincronizar PlayStation." });
+      }
+      return;
+    }
+
     if (requestUrl.pathname === "/api/snapshot-meta") {
       sendJson(res, 200, getSnapshotMetadata());
       return;

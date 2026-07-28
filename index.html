@@ -11,7 +11,7 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./assets/the-carpe-verse-logo-square.jpg" type="image/jpeg" />
     <link rel="apple-touch-icon" href="./assets/the-carpe-verse-logo-square.jpg" />
-    <link rel="stylesheet" href="./styles.css?v=9" />
+    <link rel="stylesheet" href="./styles.css?v=10" />
   </head>
   <body>
     <main class="app-shell">
@@ -281,6 +281,26 @@
             <span id="psnProfilesStatus" class="key-status">PSNProfiles sin conectar</span>
             <button id="clearPsnProfilesButton" class="tiny ghost" type="button">Borrar PSNP</button>
           </div>
+          <section class="settings-section settings-section-stack">
+            <div>
+              <p class="eyebrow">Sincronización directa</p>
+              <h3>Conectar PlayStation</h3>
+              <p class="muted">
+                Usa una sesión NPSSO una sola vez. Se cambia por una credencial cifrada de Windows,
+                se guarda solo en este PC y nunca se incluye en Git ni en tus copias.
+              </p>
+            </div>
+            <label>
+              NPSSO de PlayStation
+              <input id="playStationNpssoInput" type="password" autocomplete="off" placeholder="Pega aquí el NPSSO; no lo envíes por chat" />
+            </label>
+            <div class="settings-actions">
+              <a class="button-link ghost" href="https://ca.account.sony.com/api/v1/ssocookie" target="_blank" rel="noopener">Obtener NPSSO</a>
+              <button id="connectPlayStationButton" type="button">Conectar PlayStation</button>
+              <button id="disconnectPlayStationButton" class="ghost" type="button">Desconectar</button>
+            </div>
+            <span id="playStationStatus" class="key-status">PlayStation sin conectar</span>
+          </section>
           <section class="settings-section">
             <div>
               <p class="eyebrow">Aplicación</p>
@@ -316,6 +336,6 @@
     </main>
 
     <script src="./psnprofiles-import.js"></script>
-    <script src="./app.js?v=16"></script>
+    <script src="./app.js?v=17"></script>
   </body>
 </html>

@@ -15,8 +15,7 @@ if errorlevel 1 (
 )
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command ^
-  "$port=%PORT%; $alive=$false; try { $r=Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:'+$port+'/index.html') -TimeoutSec 1; $alive=$r.StatusCode -eq 200 } catch {}; if (-not $alive) { Start-Process -FilePath '%NODE%' -ArgumentList 'local-server.cjs' -WorkingDirectory '%ROOT%' -WindowStyle Hidden }"
+  "$port=%PORT%; $alive=$false; try { $r=Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:'+$port+'/api/playstation/status') -TimeoutSec 1; $alive=$r.StatusCode -eq 200 } catch {}; if (-not $alive) { $listeners=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue; foreach ($listener in $listeners) { $process=Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue; if ($process -and $process.ProcessName -eq 'node') { Stop-Process -Id $process.Id -Force } }; Start-Process -FilePath '%NODE%' -ArgumentList 'local-server.cjs' -WorkingDirectory '%ROOT%' -WindowStyle Hidden }"
 
 timeout /t 1 /nobreak >nul
 start "" "http://127.0.0.1:%PORT%/index.html"
-
