@@ -4,7 +4,7 @@ Aplicación privada para organizar la biblioteca de PlayStation, consultar progr
 
 ## Cómo abrirla
 
-Ejecuta `abrir-carpe-vault.bat`. La aplicación se abrirá en `http://127.0.0.1:8788/`.
+Ejecuta `abrir-carpe-vault.bat`. La aplicación se abrirá en `http://127.0.0.1:8789/`.
 
 ## Funciones actuales
 

@@ -3,7 +3,7 @@ setlocal
 
 set "ROOT=%~dp0"
 set "NODE=C:\Users\david\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
-set "PORT=8788"
+set "PORT=8789"
 
 cd /d "%ROOT%"
 
