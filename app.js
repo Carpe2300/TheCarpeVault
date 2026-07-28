@@ -1,6 +1,7 @@
 const STORAGE_KEY = "carpeVerseVault.games.v1";
 const RAWG_KEY_STORAGE = "carpeVerseVault.rawgKey.v1";
-const RAWG_COVER_MATCH_VERSION = 3;
+const RAWG_COVER_MATCH_VERSION = 4;
+const TROPHY_METADATA_VERSION = 1;
 const PSNPROFILES_USER_STORAGE = "carpeVerseVault.psnProfilesUser.v1";
 const TROPHY_PACKS_STORAGE = "carpeVerseVault.trophyPacks.v3";
 const LAST_SYNC_STORAGE = "carpeVerseVault.lastSync.v1";
@@ -1477,7 +1478,11 @@ function needsBetterCover(game) {
   // Una portada ya comprobada en esta versión no se consulta de nuevo si RAWG
   // no encontró una alternativa segura. Evita bucles y no toca portadas válidas.
   if (Number(game.coverMatchVersion || 0) >= RAWG_COVER_MATCH_VERSION) return false;
-  return Boolean(!current || isPsnProfilesCover(current));
+  return Boolean(
+    !current ||
+    isPsnProfilesCover(current) ||
+    /media\.rawg\.io\/media\/screenshots\//i.test(current)
+  );
 }
 
 function getRawgCoverOverrideKey(game) {
@@ -1628,7 +1633,9 @@ function chooseBestRawgCoverResult(game, results) {
         (result.background_image ? 10 : 0),
       };
     })
-    .filter((candidate) => candidate.titleScore >= 60)
+    // En las mejoras automáticas exigimos una coincidencia fuerte para no
+    // reemplazar una portada correcta por otra entrega con un nombre parecido.
+    .filter((candidate) => candidate.titleScore >= 75)
     .sort((a, b) => b.score - a.score);
   return candidates[0]?.result || null;
 }
@@ -2287,15 +2294,24 @@ function queueTrophyPackSync(game) {
   const trophies = getDisplayTrophies(game);
   const cacheKey = getTrophyPackCacheKey(game);
   const psnpUrl = game?.psnProfilesUrl || game?.trophy || "";
-  if (!cacheKey || !trophies.length || trophyPackState.cache[cacheKey] || trophyPackState.pending.has(cacheKey)) return;
+  const cached = trophyPackState.cache[cacheKey];
+  const needsGroups = !trophies.some((trophy) => trophy.group || trophy.section || trophy.pack || trophy.dlc || trophy.dlcName);
+  const needsMetadata = trophies.some(needsTrophyMetadataEnrichment);
+  if (!cacheKey || !trophies.length || trophyPackState.pending.has(cacheKey)) return;
   if (trophyPackState.failed.has(cacheKey)) return;
   if (!/^https?:\/\/(www\.)?psnprofiles\.com\/trophies\//i.test(psnpUrl)) return;
-  if (trophies.some((trophy) => trophy.group || trophy.section || trophy.pack || trophy.dlc || trophy.dlcName)) return;
+  if (!needsGroups && !needsMetadata) return;
+  if (Number(cached?.__metadataVersion || 0) >= TROPHY_METADATA_VERSION) return;
 
   trophyPackState.pending.add(cacheKey);
   syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl)
     .catch(() => trophyPackState.failed.add(cacheKey))
     .finally(() => trophyPackState.pending.delete(cacheKey));
+}
+
+function needsTrophyMetadataEnrichment(trophy) {
+  const type = normalizeTrophyType(trophy?.type);
+  return !trophy?.imageUrl || !type || type === "Trofeo";
 }
 
 function queueVisibleTrophyPackSync() {
@@ -2352,6 +2368,7 @@ async function syncTrophyPacksFromPsnProfiles(game, trophies, cacheKey, psnpUrl)
   const packMap = parseTrophyPacksFromSource(text, trophies);
   const importedValues = Object.values(packMap || {});
   if (!importedValues.length) return;
+  packMap.__metadataVersion = TROPHY_METADATA_VERSION;
   trophyPackState.cache[cacheKey] = packMap;
   saveTrophyPackCache();
   if (getSelectedGame()?.id === game.id) renderSoft();
