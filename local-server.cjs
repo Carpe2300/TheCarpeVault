@@ -11,6 +11,7 @@ const {
   getTitleTrophies,
   getTitleTrophyGroups,
   getUserTitles,
+  getUserTrophyProfileSummary,
   getUserTrophiesEarnedForTitle,
 } = require("psn-api");
 
@@ -233,19 +234,41 @@ async function connectPlayStation(npsso) {
 
 async function syncPlayStationTitles() {
   const authorization = await getPlayStationAuthorization();
-  const response = await getUserTitles(authorization, "me", {
-    limit: 800,
-    offset: 0,
-    headerOverrides: { "Accept-Language": "es-ES" },
-  });
+  const [response, profileSummary] = await Promise.all([
+    getUserTitles(authorization, "me", {
+      limit: 800,
+      offset: 0,
+      headerOverrides: { "Accept-Language": "es-ES" },
+    }),
+    getUserTrophyProfileSummary(authorization, "me", {
+      headerOverrides: { "Accept-Language": "es-ES" },
+    }).catch(() => null),
+  ]);
   const titles = Array.isArray(response?.trophyTitles)
     ? response.trophyTitles.map(normalizePlayStationTitle)
     : [];
+  const cache = loadPlayStationTrophyCache();
+  let cacheChanged = false;
+  for (const title of titles) {
+    const detail = cache[title.npCommunicationId];
+    if (!detail) continue;
+    if (detail.title !== title.title || detail.platform !== title.platform) {
+      detail.title = title.title;
+      detail.platform = title.platform;
+      cacheChanged = true;
+    }
+  }
+  if (cacheChanged) savePlayStationTrophyCache(cache);
   return {
     connected: true,
     onlineId: loadStoredAuth()?.onlineId || "",
     total: Number(response?.totalItemCount || titles.length),
     titles,
+    profileSummary: {
+      trophyLevel: profileSummary?.trophyLevel || "",
+      progress: Number(profileSummary?.progress || 0),
+      earnedTrophies: profileSummary?.earnedTrophies || {},
+    },
     syncedAt: new Date().toISOString(),
   };
 }
@@ -350,6 +373,8 @@ async function syncPlayStationTrophySet(authorization, title) {
 
   return {
     npCommunicationId,
+    title: title?.title || "",
+    platform: title?.platform || "",
     npServiceName,
     trophySetVersion: definedResponse?.trophySetVersion || earnedResponse?.trophySetVersion || "",
     lastUpdatedDateTime: earnedResponse?.lastUpdatedDateTime || title?.lastUpdatedDateTime || "",
