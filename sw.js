@@ -1,9 +1,9 @@
-const CACHE_NAME = "carpe-vault-shell-v19";
+const CACHE_NAME = "carpe-vault-shell-v20";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css?v=10",
-  "./app.js?v=18",
+  "./app.js?v=19",
   "./psnprofiles-import.js",
   "./manifest.json",
   "./assets/the-carpe-verse-logo-square.jpg",

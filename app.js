@@ -1186,6 +1186,7 @@ function mergePlayStationGames(importedGames) {
         npCommunicationId: imported.npCommunicationId || existing.npCommunicationId,
         npServiceName: imported.npServiceName || existing.npServiceName,
         hasTrophyGroups: Boolean(imported.hasTrophyGroups),
+        hiddenFlag: Boolean(imported.hiddenFlag),
         source: "PlayStation",
         psnLastUpdatedAt: imported.lastUpdatedDateTime || existing.psnLastUpdatedAt || "",
         imageUrl: shouldKeepExistingCover(existing)
@@ -1221,6 +1222,7 @@ function mergePlayStationGames(importedGames) {
       npCommunicationId: imported.npCommunicationId || "",
       npServiceName: imported.npServiceName || "",
       hasTrophyGroups: Boolean(imported.hasTrophyGroups),
+      hiddenFlag: Boolean(imported.hiddenFlag),
       source: "PlayStation",
       psnLastUpdatedAt: imported.lastUpdatedDateTime || "",
       createdAt: Date.now(),
@@ -2493,9 +2495,18 @@ function renderStats() {
     officialSummary = null;
   }
   const officialPlatinums = Number(officialSummary?.earnedTrophies?.platinum);
-  elements.statPlatinums.textContent = playStationConnected && Number.isFinite(officialPlatinums)
-    ? officialPlatinums
-    : state.games.filter((game) => (!playStationConnected || game.npCommunicationId) && game.status === "Platino").length;
+  const visiblePlatinums = Number(officialSummary?.visiblePlatinums);
+  const fallbackVisiblePlatinums = state.games.filter((game) =>
+    (!playStationConnected || game.npCommunicationId) && !game.hiddenFlag && game.status === "Platino").length;
+  elements.statPlatinums.textContent = playStationConnected && Number.isFinite(visiblePlatinums)
+    ? visiblePlatinums
+    : fallbackVisiblePlatinums;
+  if (elements.statPlatinums?.parentElement && Number.isFinite(officialPlatinums)) {
+    const hidden = Math.max(officialPlatinums - (Number.isFinite(visiblePlatinums) ? visiblePlatinums : fallbackVisiblePlatinums), 0);
+    elements.statPlatinums.parentElement.title = hidden
+      ? `${officialPlatinums} oficiales en PlayStation; ${hidden} pertenecen a juegos ocultos.`
+      : `${officialPlatinums} oficiales en PlayStation.`;
+  }
   elements.statProgress.textContent = state.games.filter((game) =>
     (!playStationConnected || game.npCommunicationId) && game.status === "En progreso").length;
   elements.statBacklog.textContent = state.games.filter((game) =>

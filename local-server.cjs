@@ -206,6 +206,7 @@ function normalizePlayStationTitle(title) {
     npCommunicationId: title.npCommunicationId,
     npServiceName: title.npServiceName,
     hasTrophyGroups: Boolean(title.hasTrophyGroups),
+    hiddenFlag: Boolean(title.hiddenFlag),
     earnedTrophies: title.earnedTrophies || {},
     definedTrophies: title.definedTrophies || {},
     source: "PlayStation",
@@ -259,6 +260,8 @@ async function syncPlayStationTitles() {
     }
   }
   if (cacheChanged) savePlayStationTrophyCache(cache);
+  const visiblePlatinums = titles.filter((title) => title.status === "Platino" && !title.hiddenFlag).length;
+  const officialPlatinums = Number(profileSummary?.earnedTrophies?.platinum || 0);
   return {
     connected: true,
     onlineId: loadStoredAuth()?.onlineId || "",
@@ -268,6 +271,8 @@ async function syncPlayStationTitles() {
       trophyLevel: profileSummary?.trophyLevel || "",
       progress: Number(profileSummary?.progress || 0),
       earnedTrophies: profileSummary?.earnedTrophies || {},
+      visiblePlatinums,
+      hiddenPlatinums: Math.max(officialPlatinums - visiblePlatinums, 0),
     },
     syncedAt: new Date().toISOString(),
   };
